@@ -463,6 +463,12 @@ document.getElementById('log-date').textContent =
   new Date().toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
 
 // ---- Profile toggle ----
+function updateSubmitLabel() {
+  const val = exerciseInput.value.trim();
+  const btn = document.getElementById('submit-btn');
+  btn.textContent = val ? `Log ${val} — ${getCurrentProfile()}` : 'Enter an exercise';
+}
+
 function renderProfileTabs() {
   const el = document.getElementById('profile-tabs');
   el.innerHTML = '';
@@ -472,9 +478,12 @@ function renderProfileTabs() {
     btn.className = 'profile-tab' + (name === current ? ' active' : '');
     btn.textContent = name;
     btn.onclick = () => {
+      const alreadyActive = name === getCurrentProfile();
       setCurrentProfile(name);
       renderProfileTabs();
+      updateSubmitLabel();
       loadProgress(); // keep Progress in sync if it's already loaded once
+      if (!alreadyActive) showToast(`Now logging as ${name}`);
     };
     el.appendChild(btn);
   });
@@ -538,14 +547,27 @@ async function fetchHistory() {
 const exerciseInput = document.getElementById('exercise-input');
 exerciseInput.addEventListener('input', () => {
   const val = exerciseInput.value.trim();
-  const btn = document.getElementById('submit-btn');
-  btn.disabled = !val;
-  btn.textContent = val ? `Log ${val}` : 'Enter an exercise';
+  document.getElementById('submit-btn').disabled = !val;
+  updateSubmitLabel();
 });
 exerciseInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && exerciseInput.value.trim()) {
+  if (e.key === 'Enter') {
     e.preventDefault();
-    document.getElementById('submit-btn').click();
+    document.getElementById('sets').focus(); // move forward, don't submit yet
+  }
+});
+
+document.getElementById('sets').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('reps').focus(); }
+});
+document.getElementById('reps').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('weight').focus(); }
+});
+document.getElementById('weight').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const btn = document.getElementById('submit-btn');
+    if (!btn.disabled) btn.click(); // only fires if an exercise name was actually entered
   }
 });
 
@@ -608,7 +630,7 @@ document.getElementById('submit-btn').onclick = async () => {
   }
 
   btn.disabled = false;
-  btn.textContent = `Log ${exercise}`;
+  updateSubmitLabel();
 };
 
 // ---- Toast ----
