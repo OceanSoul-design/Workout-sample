@@ -18,6 +18,7 @@
     --chest: #4a9b6f;
     --shoulders: #5A7A8C;
     --legs: #8C5A7A;
+    --back: #5D4A8C;
     --success: #4a9b6f;
     --error: #D9622B;
     --radius: 12px;
@@ -142,32 +143,35 @@
   .group-tab[data-group="Chest"].active { background: var(--chest); }
   .group-tab[data-group="Shoulders"].active { background: var(--shoulders); }
   .group-tab[data-group="Legs"].active { background: var(--legs); }
+  .group-tab[data-group="Back"].active { background: var(--back); }
 
-  /* Exercise grid */
-  .exercise-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 24px;
-  }
-  .ex-btn {
-    padding: 14px 12px;
-    border-radius: var(--radius);
+  .profile-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .profile-tab {
+    padding: 6px 16px;
+    border-radius: 20px;
     border: 1px solid var(--border);
     background: var(--surface);
-    color: var(--text);
+    color: var(--muted);
     font-size: 13px;
-    text-align: left;
+    font-weight: 500;
     cursor: pointer;
-    line-height: 1.3;
     transition: all .15s;
   }
-  .ex-btn.selected { border-color: transparent; color: #fff; }
-  .ex-btn[data-group="Abs"].selected { background: var(--abs); }
-  .ex-btn[data-group="Bicep"].selected { background: var(--bicep); }
-  .ex-btn[data-group="Chest"].selected { background: var(--chest); }
-  .ex-btn[data-group="Shoulders"].selected { background: var(--shoulders); }
-  .ex-btn[data-group="Legs"].selected { background: var(--legs); }
+  .profile-tab.active { background: var(--text); color: var(--bg); border-color: transparent; }
+
+  /* Exercise input */
+  .exercise-input-wrap { margin-bottom: 24px; }
+  .exercise-input-wrap input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 16px;
+    padding: 14px;
+    -webkit-appearance: none;
+  }
+  .exercise-input-wrap input:focus { outline: none; border-color: #4a4d5a; }
 
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
@@ -321,8 +325,14 @@
   <h1>Log workout</h1>
   <p class="subtitle" id="log-date"></p>
 
+  <div class="profile-tabs" id="profile-tabs"></div>
+
   <div class="group-tabs" id="group-tabs"></div>
-  <div class="exercise-grid" id="exercise-grid"></div>
+
+  <div class="exercise-input-wrap">
+    <input type="text" id="exercise-input" list="exercise-suggestions" placeholder="Type an exercise..." autocomplete="off">
+    <datalist id="exercise-suggestions"></datalist>
+  </div>
 
   <div class="fields">
     <div class="field-row">
@@ -364,7 +374,7 @@
     </div>
   </div>
 
-  <button class="submit-btn" id="submit-btn" disabled>Select an exercise</button>
+  <button class="submit-btn" id="submit-btn" disabled>Enter an exercise</button>
 </div>
 
 <!-- PROGRESS PAGE -->
@@ -404,30 +414,76 @@ function getToken() {
   return sessionStorage.getItem('authToken') || '';
 }
 
-const EXERCISES = {
+// Edit this list to add/remove people. Stored on the device (not
+// server-verified) since everyone shares one PIN.
+const PROFILES = ['Alex', 'Sam'];
+
+function getCurrentProfile() {
+  return localStorage.getItem('profile') || PROFILES[0];
+}
+
+function setCurrentProfile(name) {
+  localStorage.setItem('profile', name);
+}
+
+// Used only to figure out which group old, pre-freeform rows belonged to
+// (back when exercises came from a fixed button grid). New rows carry
+// their own group, sent along at log time.
+const LEGACY_GROUPS = {
   Abs:       ['Cable Crunch', 'Hanging Leg Raise', 'Decline Sit Ups'],
   Bicep:     ['Barbell Curls', 'Incline Curls', 'Preacher Curls'],
-  Chest:     ['Bench Press', 'Flat Press Machine', 'Incline Smith Machine', 'Pec Deck', 'Chest Press Machine'],
+  Chest:     ['Bench Press', 'Flat Press Machine', 'Incline Smith Machine', 'Pec Deck', 'Chest Press Machine', 'Push Ups'],
   Shoulders: ['Machine Shoulder Press', 'Cable Lateral Raise', 'Cable Rear Delt Fly'],
   Legs:      ['Leg Spreader Machine', 'Barbell Squats', 'Leg Extensions'],
+  Back:      ['Pull Ups'],
 };
+function legacyGroupFor(name) {
+  for (const grp of Object.keys(LEGACY_GROUPS)) {
+    if (LEGACY_GROUPS[grp].includes(name)) return grp;
+  }
+  return null;
+}
+
+const GROUP_NAMES = ['Abs', 'Bicep', 'Chest', 'Shoulders', 'Legs', 'Back'];
 
 const GROUP_COLORS = {
   Abs: '#D9622B', Bicep: '#C99A3B', Chest: '#4a9b6f',
-  Shoulders: '#5A7A8C', Legs: '#8C5A7A',
+  Shoulders: '#5A7A8C', Legs: '#8C5A7A', Back: '#5D4A8C', Other: '#6b7280',
 };
 
-let selectedExercise = null;
-let selectedGroup = null;
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 let currentGroup = 'Abs';
+let knownExercisesByGroup = {};
 
 // ---- Date subtitle ----
 document.getElementById('log-date').textContent =
   new Date().toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
 
+// ---- Profile toggle ----
+function renderProfileTabs() {
+  const el = document.getElementById('profile-tabs');
+  el.innerHTML = '';
+  const current = getCurrentProfile();
+  PROFILES.forEach(name => {
+    const btn = document.createElement('button');
+    btn.className = 'profile-tab' + (name === current ? ' active' : '');
+    btn.textContent = name;
+    btn.onclick = () => {
+      setCurrentProfile(name);
+      renderProfileTabs();
+      loadProgress(); // keep Progress in sync if it's already loaded once
+    };
+    el.appendChild(btn);
+  });
+}
+renderProfileTabs();
+
 // ---- Build group tabs ----
 const groupTabsEl = document.getElementById('group-tabs');
-Object.keys(EXERCISES).forEach(grp => {
+GROUP_NAMES.forEach(grp => {
   const btn = document.createElement('button');
   btn.className = 'group-tab' + (grp === 'Abs' ? ' active' : '');
   btn.dataset.group = grp;
@@ -439,32 +495,59 @@ Object.keys(EXERCISES).forEach(grp => {
 function selectGroup(grp) {
   currentGroup = grp;
   document.querySelectorAll('.group-tab').forEach(b => b.classList.toggle('active', b.dataset.group === grp));
-  renderExercises();
+  renderExerciseSuggestions();
 }
 
-// ---- Build exercise grid ----
-function renderExercises() {
-  const grid = document.getElementById('exercise-grid');
-  grid.innerHTML = '';
-  EXERCISES[currentGroup].forEach(ex => {
-    const btn = document.createElement('button');
-    btn.className = 'ex-btn' + (ex === selectedExercise ? ' selected' : '');
-    btn.dataset.group = currentGroup;
-    btn.textContent = ex;
-    btn.onclick = () => selectExercise(ex, currentGroup);
-    grid.appendChild(btn);
+// ---- Autocomplete suggestions, scoped to the active group ----
+function renderExerciseSuggestions() {
+  const dl = document.getElementById('exercise-suggestions');
+  dl.innerHTML = '';
+  const names = Array.from(knownExercisesByGroup[currentGroup] || []).sort();
+  names.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    dl.appendChild(opt);
   });
 }
-renderExercises();
 
-function selectExercise(ex, grp) {
-  selectedExercise = ex;
-  selectedGroup = grp;
-  renderExercises();
-  const btn = document.getElementById('submit-btn');
-  btn.disabled = false;
-  btn.textContent = `Log ${ex}`;
+function indexHistory(rows) {
+  const data = rows.slice(1).filter(r => r[2]);
+  const map = {};
+  data.forEach(r => {
+    const name = r[2];
+    const grp = r[11] || legacyGroupFor(name) || 'Other';
+    if (!map[grp]) map[grp] = new Set();
+    map[grp].add(name);
+  });
+  knownExercisesByGroup = map;
+  renderExerciseSuggestions();
 }
+
+async function fetchHistory() {
+  try {
+    const res = await fetch(SCRIPT_URL + '?token=' + encodeURIComponent(getToken()));
+    const json = await res.json();
+    if (json.ok) indexHistory(json.rows);
+    return json;
+  } catch (e) {
+    return { ok: false };
+  }
+}
+
+// ---- Exercise name input ----
+const exerciseInput = document.getElementById('exercise-input');
+exerciseInput.addEventListener('input', () => {
+  const val = exerciseInput.value.trim();
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = !val;
+  btn.textContent = val ? `Log ${val}` : 'Enter an exercise';
+});
+exerciseInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && exerciseInput.value.trim()) {
+    e.preventDefault();
+    document.getElementById('submit-btn').click();
+  }
+});
 
 // ---- Optional toggle ----
 document.getElementById('optional-toggle').onclick = function() {
@@ -477,8 +560,9 @@ document.getElementById('submit-btn').onclick = async () => {
   const sets = document.getElementById('sets').value;
   const reps = document.getElementById('reps').value;
   const weight = document.getElementById('weight').value;
+  const exercise = exerciseInput.value.trim();
 
-  if (!selectedExercise) return;
+  if (!exercise) return;
 
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
@@ -487,9 +571,11 @@ document.getElementById('submit-btn').onclick = async () => {
   const now = new Date();
   const payload = {
     token: getToken(),
+    user: getCurrentProfile(),
     date: now.toLocaleDateString('en-US'),
     time: now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
-    exercise: selectedExercise,
+    exercise: exercise,
+    group: currentGroup,
     reps: reps || '',
     sets: sets || '',
     weight: weight || '',
@@ -509,7 +595,11 @@ document.getElementById('submit-btn').onclick = async () => {
       body: JSON.stringify(payload),
     });
     showToast('✓ Logged');
-    // Clear numeric fields, keep exercise selected
+    // Add it to this group's suggestions right away, and clear numeric
+    // fields — but keep the exercise name so repeat sets are fast.
+    if (!knownExercisesByGroup[currentGroup]) knownExercisesByGroup[currentGroup] = new Set();
+    knownExercisesByGroup[currentGroup].add(exercise);
+    renderExerciseSuggestions();
     ['sets','reps','weight','energy','bodyweight','howlong'].forEach(id => {
       document.getElementById(id).value = '';
     });
@@ -518,7 +608,7 @@ document.getElementById('submit-btn').onclick = async () => {
   }
 
   btn.disabled = false;
-  btn.textContent = `Log ${selectedExercise}`;
+  btn.textContent = `Log ${exercise}`;
 };
 
 // ---- Toast ----
@@ -558,20 +648,24 @@ async function loadProgress() {
 
     const rows = json.rows;
     // rows[0] = headers, rows[1+] = data
-    // cols: 0=Date, 1=Time, 2=Exercise, 3=Reps, 4=Sets, 5=Weight, 6=Energy, 7=Bodyweight, 8=Howlong
-    const data = rows.slice(1).filter(r => r[2]);
+    // cols: 0=Date, 1=Time, 2=Type, 3=Reps, 4=Sets, 5=Weight, 6=Energy,
+    //       7=Body Weight, 8=How Long, 9=Volume, 10=User, 11=Group
+    indexHistory(rows); // keep Log page's autocomplete fresh too
+    const activeProfile = getCurrentProfile();
+    const data = rows.slice(1).filter(r => r[2] && r[10] === activeProfile);
 
     // Group by exercise
     const byEx = {};
     data.forEach(r => {
       const ex = r[2];
-      if (!byEx[ex]) byEx[ex] = [];
-      byEx[ex].push({
+      const grp = r[11] || legacyGroupFor(ex) || 'Other';
+      if (!byEx[ex]) byEx[ex] = { group: grp, sessions: [] };
+      byEx[ex].sessions.push({
         date: r[0],
         reps: parseFloat(r[3]) || 0,
         sets: parseFloat(r[4]) || 0,
         weight: parseFloat(r[5]) || 0,
-        volume: (parseFloat(r[3])||0) * (parseFloat(r[4])||0) * (parseFloat(r[5])||0),
+        volume: parseFloat(r[9]) || ((parseFloat(r[3])||0) * (parseFloat(r[4])||0) * (parseFloat(r[5])||0)),
       });
     });
 
@@ -581,13 +675,19 @@ async function loadProgress() {
     }
 
     let html = '';
-    // Sort exercises by group order
-    const allEx = Object.values(EXERCISES).flat();
-    const sorted = allEx.filter(ex => byEx[ex]);
+    // Sort by group (in a fixed order), then alphabetically within group
+    const GROUP_ORDER = ['Abs', 'Bicep', 'Chest', 'Shoulders', 'Legs', 'Back', 'Other'];
+    const sorted = Object.keys(byEx).sort((a, b) => {
+      const ia = GROUP_ORDER.indexOf(byEx[a].group);
+      const ib = GROUP_ORDER.indexOf(byEx[b].group);
+      const oa = ia === -1 ? 999 : ia;
+      const ob = ib === -1 ? 999 : ib;
+      return oa !== ob ? oa - ob : a.localeCompare(b);
+    });
 
     sorted.forEach(ex => {
-      const sessions = byEx[ex];
-      const grp = Object.keys(EXERCISES).find(g => EXERCISES[g].includes(ex));
+      const sessions = byEx[ex].sessions;
+      const grp = byEx[ex].group;
       const last6 = sessions.slice(-6);
       const prev3 = sessions.slice(-6, -3);
       const recent3 = sessions.slice(-3);
@@ -620,7 +720,7 @@ async function loadProgress() {
       html += `
         <div class="exercise-card">
           <div class="card-header">
-            <span class="card-name">${ex}</span>
+            <span class="card-name">${escapeHtml(ex)}</span>
             <span class="card-group" style="background:${GROUP_COLORS[grp]}">${grp}</span>
           </div>
           <div class="card-stats">
@@ -648,11 +748,11 @@ async function loadProgress() {
 
     // Draw sparkline charts
     sorted.forEach(ex => {
-      const sessions = byEx[ex];
+      const sessions = byEx[ex].sessions;
       const last6 = sessions.slice(-6);
       const volumes = last6.map(s => s.volume);
       const canvasId = 'chart-' + ex.replace(/\s+/g, '-');
-      const grp = Object.keys(EXERCISES).find(g => EXERCISES[g].includes(ex));
+      const grp = byEx[ex].group;
       drawSparkline(canvasId, volumes, GROUP_COLORS[grp]);
     });
 
@@ -748,6 +848,7 @@ let checking = false;
 
 if (sessionStorage.getItem('authToken')) {
   document.getElementById('pin-screen').style.display = 'none';
+  fetchHistory();
 }
 
 function setPadDisabled(disabled) {
@@ -789,6 +890,7 @@ async function checkPin() {
     if (data.ok) {
       sessionStorage.setItem('authToken', attempted);
       document.getElementById('pin-screen').style.display = 'none';
+      fetchHistory();
       checking = false;
       return;
     }
