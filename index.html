@@ -19,6 +19,7 @@
     --shoulders: #5A7A8C;
     --legs: #8C5A7A;
     --success: #4a9b6f;
+    --error: #D9622B;
     --radius: 12px;
   }
 
@@ -36,6 +37,7 @@
   }
   #pin-screen h2 { font-size: 20px; font-weight: 600; color: var(--text); }
   #pin-screen p { font-size: 13px; color: var(--muted); margin-top: -24px; }
+  #pin-status { font-size: 12px; color: var(--error); margin-top: -20px; min-height: 16px; }
   .pin-dots {
     display: flex;
     gap: 16px;
@@ -70,6 +72,7 @@
   .pin-btn:active { background: var(--border); }
   .pin-btn.empty { border: none; background: none; cursor: default; }
   .pin-btn.del { font-size: 16px; color: var(--muted); }
+  .pin-btn:disabled { opacity: .4; cursor: not-allowed; }
 
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -232,6 +235,7 @@
     white-space: nowrap;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: var(--error); }
 
   /* Progress page */
   .progress-header {
@@ -396,6 +400,10 @@
 <script>
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw0iOrYvOgBQGDDjW80uB4EbHcGMy3zaaDDDJHuRizEfqj-4TD7T3tb3E-Km3QSyTnN/exec';
 
+function getToken() {
+  return sessionStorage.getItem('authToken') || '';
+}
+
 const EXERCISES = {
   Abs:       ['Cable Crunch', 'Hanging Leg Raise', 'Decline Sit Ups'],
   Bicep:     ['Barbell Curls', 'Incline Curls', 'Preacher Curls'],
@@ -478,6 +486,7 @@ document.getElementById('submit-btn').onclick = async () => {
 
   const now = new Date();
   const payload = {
+    token: getToken(),
     date: now.toLocaleDateString('en-US'),
     time: now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
     exercise: selectedExercise,
@@ -490,6 +499,9 @@ document.getElementById('submit-btn').onclick = async () => {
   };
 
   try {
+    // NOTE: mode:'no-cors' means we can't read the response body/status here.
+    // If the token were ever wrong, this would silently fail to save — the
+    // gate that matters is the PIN check at unlock time (see pin script below).
     await fetch(SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
@@ -502,7 +514,7 @@ document.getElementById('submit-btn').onclick = async () => {
       document.getElementById(id).value = '';
     });
   } catch(e) {
-    showToast('Connection error — try again');
+    showToast('Connection error — try again', true);
   }
 
   btn.disabled = false;
@@ -510,9 +522,10 @@ document.getElementById('submit-btn').onclick = async () => {
 };
 
 // ---- Toast ----
-function showToast(msg) {
+function showToast(msg, isError = false) {
   const t = document.getElementById('toast');
   t.textContent = msg;
+  t.classList.toggle('error', !!isError);
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
 }
@@ -534,8 +547,16 @@ async function loadProgress() {
   el.innerHTML = '<div class="loading">Loading...</div>';
 
   try {
-    const res = await fetch(SCRIPT_URL);
-    const rows = await res.json();
+    const res = await fetch(SCRIPT_URL + '?token=' + encodeURIComponent(getToken()));
+    const json = await res.json();
+
+    if (!json.ok) {
+      el.innerHTML = '<div class="empty-state">Session expired or unauthorized.<br>Reload the page to sign in again.</div>';
+      sessionStorage.removeItem('authToken');
+      return;
+    }
+
+    const rows = json.rows;
     // rows[0] = headers, rows[1+] = data
     // cols: 0=Date, 1=Time, 2=Exercise, 3=Reps, 4=Sets, 5=Weight, 6=Energy, 7=Bodyweight, 8=Howlong
     const data = rows.slice(1).filter(r => r[2]);
@@ -694,6 +715,7 @@ document.getElementById('refresh-btn').onclick = loadProgress;
 <div id="pin-screen">
   <h2>Workout Log</h2>
   <p>Enter PIN to continue</p>
+  <p id="pin-status"></p>
   <div class="pin-dots">
     <div class="pin-dot" id="dot-0"></div>
     <div class="pin-dot" id="dot-1"></div>
@@ -717,22 +739,30 @@ document.getElementById('refresh-btn').onclick = loadProgress;
 </div>
 
 <script>
-const CORRECT_PIN = '0613';
-let pinEntry = '';
+// The correct PIN is NOT stored here anymore — it lives only in the
+// Apps Script's Script Properties (server-side) and is verified over
+// the network. Reading this file's source no longer reveals it.
 
-// Check if already unlocked this session
-if (sessionStorage.getItem('unlocked') === 'yes') {
+let pinEntry = '';
+let checking = false;
+
+if (sessionStorage.getItem('authToken')) {
   document.getElementById('pin-screen').style.display = 'none';
 }
 
+function setPadDisabled(disabled) {
+  document.querySelectorAll('.pin-btn:not(.empty)').forEach(b => b.disabled = disabled);
+}
+
 function pinPress(digit) {
-  if (pinEntry.length >= 4) return;
+  if (checking || pinEntry.length >= 4) return;
   pinEntry += digit;
   updateDots();
   if (pinEntry.length === 4) checkPin();
 }
 
 function pinDelete() {
+  if (checking) return;
   pinEntry = pinEntry.slice(0, -1);
   updateDots();
 }
@@ -745,17 +775,38 @@ function updateDots(error = false) {
   }
 }
 
-function checkPin() {
-  if (pinEntry === CORRECT_PIN) {
-    sessionStorage.setItem('unlocked', 'yes');
-    document.getElementById('pin-screen').style.display = 'none';
-  } else {
-    updateDots(true);
-    setTimeout(() => {
-      pinEntry = '';
-      updateDots();
-    }, 600);
+async function checkPin() {
+  const attempted = pinEntry;
+  checking = true;
+  setPadDisabled(true);
+  document.getElementById('pin-status').textContent = '';
+
+  try {
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(attempted) + '&action=ping';
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.ok) {
+      sessionStorage.setItem('authToken', attempted);
+      document.getElementById('pin-screen').style.display = 'none';
+      checking = false;
+      return;
+    }
+
+    if (data.error === 'locked_out') {
+      document.getElementById('pin-status').textContent = 'Too many attempts — try again in a few minutes.';
+    }
+  } catch (e) {
+    document.getElementById('pin-status').textContent = 'Connection error — check your network.';
   }
+
+  updateDots(true);
+  setTimeout(() => {
+    pinEntry = '';
+    updateDots();
+    setPadDisabled(false);
+    checking = false;
+  }, 600);
 }
 </script>
 
