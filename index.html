@@ -22,6 +22,55 @@
     --radius: 12px;
   }
 
+  /* PIN screen */
+  #pin-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    gap: 32px;
+  }
+  #pin-screen h2 { font-size: 20px; font-weight: 600; color: var(--text); }
+  #pin-screen p { font-size: 13px; color: var(--muted); margin-top: -24px; }
+  .pin-dots {
+    display: flex;
+    gap: 16px;
+  }
+  .pin-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: none;
+    transition: background .15s, border-color .15s;
+  }
+  .pin-dot.filled { background: var(--text); border-color: var(--text); }
+  .pin-dot.error { background: var(--abs); border-color: var(--abs); }
+  .pin-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 72px);
+    gap: 12px;
+  }
+  .pin-btn {
+    height: 72px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 22px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pin-btn:active { background: var(--border); }
+  .pin-btn.empty { border: none; background: none; cursor: default; }
+  .pin-btn.del { font-size: 16px; color: var(--muted); }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg);
@@ -641,5 +690,74 @@ function drawSparkline(canvasId, values, color) {
 
 document.getElementById('refresh-btn').onclick = loadProgress;
 </script>
+<!-- PIN SCREEN -->
+<div id="pin-screen">
+  <h2>Workout Log</h2>
+  <p>Enter PIN to continue</p>
+  <div class="pin-dots">
+    <div class="pin-dot" id="dot-0"></div>
+    <div class="pin-dot" id="dot-1"></div>
+    <div class="pin-dot" id="dot-2"></div>
+    <div class="pin-dot" id="dot-3"></div>
+  </div>
+  <div class="pin-pad">
+    <button class="pin-btn" onclick="pinPress('1')">1</button>
+    <button class="pin-btn" onclick="pinPress('2')">2</button>
+    <button class="pin-btn" onclick="pinPress('3')">3</button>
+    <button class="pin-btn" onclick="pinPress('4')">4</button>
+    <button class="pin-btn" onclick="pinPress('5')">5</button>
+    <button class="pin-btn" onclick="pinPress('6')">6</button>
+    <button class="pin-btn" onclick="pinPress('7')">7</button>
+    <button class="pin-btn" onclick="pinPress('8')">8</button>
+    <button class="pin-btn" onclick="pinPress('9')">9</button>
+    <button class="pin-btn empty"></button>
+    <button class="pin-btn" onclick="pinPress('0')">0</button>
+    <button class="pin-btn del" onclick="pinDelete()">⌫</button>
+  </div>
+</div>
+
+<script>
+const CORRECT_PIN = '0613';
+let pinEntry = '';
+
+// Check if already unlocked this session
+if (sessionStorage.getItem('unlocked') === 'yes') {
+  document.getElementById('pin-screen').style.display = 'none';
+}
+
+function pinPress(digit) {
+  if (pinEntry.length >= 4) return;
+  pinEntry += digit;
+  updateDots();
+  if (pinEntry.length === 4) checkPin();
+}
+
+function pinDelete() {
+  pinEntry = pinEntry.slice(0, -1);
+  updateDots();
+}
+
+function updateDots(error = false) {
+  for (let i = 0; i < 4; i++) {
+    const dot = document.getElementById('dot-' + i);
+    dot.classList.toggle('filled', i < pinEntry.length && !error);
+    dot.classList.toggle('error', error);
+  }
+}
+
+function checkPin() {
+  if (pinEntry === CORRECT_PIN) {
+    sessionStorage.setItem('unlocked', 'yes');
+    document.getElementById('pin-screen').style.display = 'none';
+  } else {
+    updateDots(true);
+    setTimeout(() => {
+      pinEntry = '';
+      updateDots();
+    }, 600);
+  }
+}
+</script>
+
 </body>
 </html>
