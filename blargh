@@ -114,9 +114,21 @@ function deleteEntry_(payload) {
   return jsonOut_({ ok: true });
 }
 
-function addCustomExercise_(payload) {
-  const sheet = getCustomSheet_();
-  sheet.appendRow([
+// CustomExercises id column (0-based) — a separate index from the log's ID_COL_INDEX
+const CUSTOM_ID_COL_INDEX = 0;
+
+// Returns the 1-based sheet row number for a given custom-exercise id, or -1 if not found.
+function findCustomRowIndexById_(sheet, id) {
+  if (!id) return -1;
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) { // skip header row
+    if (values[i][CUSTOM_ID_COL_INDEX] === id) return i + 1;
+  }
+  return -1;
+}
+
+function customRowValuesFromPayload_(payload) {
+  return [
     payload.id || '',
     payload.name || '',
     payload.group || '',
@@ -125,7 +137,29 @@ function addCustomExercise_(payload) {
     payload.secondaryMuscles || '',
     payload.user || '',
     payload.date || '',
-  ]);
+  ];
+}
+
+function addCustomExercise_(payload) {
+  const sheet = getCustomSheet_();
+  sheet.appendRow(customRowValuesFromPayload_(payload));
+  return jsonOut_({ ok: true });
+}
+
+function updateCustomExercise_(payload) {
+  const sheet = getCustomSheet_();
+  const rowNum = findCustomRowIndexById_(sheet, payload.id);
+  if (rowNum === -1) return jsonOut_({ ok: false, error: 'not_found' });
+  const values = customRowValuesFromPayload_(payload);
+  sheet.getRange(rowNum, 1, 1, values.length).setValues([values]);
+  return jsonOut_({ ok: true });
+}
+
+function deleteCustomExercise_(payload) {
+  const sheet = getCustomSheet_();
+  const rowNum = findCustomRowIndexById_(sheet, payload.id);
+  if (rowNum === -1) return jsonOut_({ ok: false, error: 'not_found' });
+  sheet.deleteRow(rowNum);
   return jsonOut_({ ok: true });
 }
 
@@ -162,5 +196,7 @@ function doPost(e) {
   if (op === 'update') return updateEntry_(payload);
   if (op === 'delete') return deleteEntry_(payload);
   if (op === 'addCustomExercise') return addCustomExercise_(payload);
+  if (op === 'updateCustomExercise') return updateCustomExercise_(payload);
+  if (op === 'deleteCustomExercise') return deleteCustomExercise_(payload);
   return createEntry_(payload);
 }
