@@ -637,6 +637,8 @@
 
   <div class="profile-tabs" id="profile-tabs"></div>
 
+  <div id="log-calorie-estimate"></div>
+
   <div class="exercise-input-wrap">
     <input type="text" id="exercise-search" placeholder="Loading exercises..." autocomplete="off" disabled>
     <input type="hidden" id="exercise-input">
@@ -1197,6 +1199,7 @@ function renderProfileTabs() {
       updateSubmitLabel();
       loadProgress(); // keep Progress in sync if it's already loaded once
       loadRoutines(); // and Routines, since it's per-profile
+      renderLogPageCalorieEstimate();
       if (!alreadyActive) showToast(`Now logging as ${name}`);
     };
     el.appendChild(btn);
@@ -1222,7 +1225,11 @@ async function fetchHistory() {
   try {
     const res = await fetch(SCRIPT_URL + '?token=' + encodeURIComponent(getToken()));
     const json = await res.json();
-    if (json.ok) indexHistory(json.rows);
+    if (json.ok) {
+      indexHistory(json.rows);
+      allLogRows = json.rows.slice(1);
+      renderLogPageCalorieEstimate();
+    }
     return json;
   } catch (e) {
     return { ok: false };
@@ -1339,6 +1346,17 @@ document.getElementById('submit-btn').onclick = async () => {
   const res = await sendEntryOp(payload);
   if (res && res.ok) {
     showToast('✓ Logged');
+    // Mirror this entry into our local cache (same column order the backend
+    // uses) so the live calorie estimate updates instantly, no refetch needed.
+    const repsN = parseFloat(payload.reps) || 0;
+    const setsN = parseFloat(payload.sets) || 0;
+    const weightN = parseFloat(payload.weight) || 0;
+    allLogRows.push([
+      payload.date, payload.time, payload.exercise, payload.reps, payload.sets, payload.weight,
+      payload.energy, payload.bodyweight, payload.howlong, repsN * setsN * weightN,
+      payload.user, payload.group, payload.id,
+    ]);
+    renderLogPageCalorieEstimate();
     // Clear numeric fields but keep the selected exercise so repeat
     // sets are fast (dropdown selection stays as-is).
     ['sets','reps','weight','energy','bodyweight','howlong'].forEach(id => {
@@ -1419,36 +1437,41 @@ function estimateCaloriesForDay(rows, bodyWeightKg) {
   return Math.round(avgMet * bodyWeightKg * durationHours);
 }
 
-function renderDailyCalorieEstimate() {
-  const el = document.getElementById('calorie-estimate');
-  const activeProfile = getCurrentProfile();
+// Builds the calorie card's inner HTML for a given profile, or null if there's
+// nothing to show yet (no rows logged today, or no body weight on file).
+function buildCalorieCardHtml(profile) {
   const today = new Date().toLocaleDateString('en-US');
-  const todaysRows = allLogRows.filter(r => r[0] === today && r[10] === activeProfile && r[2]);
+  const todaysRows = allLogRows.filter(r => r[0] === today && r[10] === profile && r[2]);
+  if (!todaysRows.length) return null;
 
-  if (!todaysRows.length) {
-    el.innerHTML = '';
-    return;
-  }
-
-  const bwLbs = getLatestBodyWeightForProfile(activeProfile);
+  const bwLbs = getLatestBodyWeightForProfile(profile);
   if (!bwLbs) {
-    el.innerHTML = '<div class="calorie-hint">Log your body weight (optional field on the Log page) to enable a calorie estimate.</div>';
-    return;
+    return '<div class="calorie-hint">Log your body weight (optional field above) to enable a calorie estimate.</div>';
   }
 
   const bwKg = bwLbs / 2.20462;
   const est = estimateCaloriesForDay(todaysRows, bwKg);
-  if (est === null) {
-    el.innerHTML = '';
-    return;
-  }
+  if (est === null) return null;
 
-  el.innerHTML = `
+  return `
     <div class="calorie-card">
       <div class="calorie-value">~${est} kcal</div>
       <div class="calorie-label">Estimated calories burned today</div>
       <div class="calorie-note">Rough estimate from average MET values — not exact</div>
     </div>`;
+}
+
+function renderDailyCalorieEstimate() {
+  const el = document.getElementById('calorie-estimate');
+  el.innerHTML = buildCalorieCardHtml(getCurrentProfile()) || '';
+}
+
+// Live version shown right on the Log page — updates instantly from data
+// already in the browser, no network round trip needed after initial load.
+function renderLogPageCalorieEstimate() {
+  const el = document.getElementById('log-calorie-estimate');
+  if (!el) return;
+  el.innerHTML = buildCalorieCardHtml(getCurrentProfile()) || '';
 }
 
 async function loadProgress() {
