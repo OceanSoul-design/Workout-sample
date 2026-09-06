@@ -1522,19 +1522,33 @@ function getBodyWeightAsOf(profile, dateStr) {
   return earliest ? (parseFloat(earliest[7]) || null) : null;
 }
 
-// Rough calorie estimate for a set of same-day log rows: derives session
-// duration from the first/last logged timestamp, and a blended MET value
-// across whatever distinct exercises were logged that day.
+// Rough calorie estimate for a set of same-day log rows. Duration is the
+// LARGER of: (a) the gap between the first and last logged timestamp, or
+// (b) a floor based on total sets logged (~2 min/set, incl. rest). Using
+// only the timestamp gap breaks down when sets get logged back-to-back
+// quickly — the gap can shrink toward zero even as more sets get added,
+// which would make logging *more* work look like *less* effort. The floor
+// guards against that; the timestamp gap still wins credit for a genuinely
+// long, spread-out session.
+const CALORIE_MIN_MINUTES_PER_SET = 2;
+const CALORIE_MIN_SESSION_MINUTES = 15;
+const CALORIE_MAX_SESSION_MINUTES = 240;
+
 function estimateCaloriesForDay(rows, bodyWeightKg) {
   if (!rows.length || !bodyWeightKg) return null;
-  const times = rows.map(r => parseTimeToMinutes(r[1])).filter(t => t !== null);
-  if (!times.length) return null;
 
-  const start = Math.min(...times);
-  const end = Math.max(...times);
-  let durationHours = (end - start) / 60;
-  if (durationHours <= 0) durationHours = 0.25; // single-set day: assume ~15 min
-  durationHours = Math.min(durationHours, 4); // guard against odd/sparse timestamps
+  const times = rows.map(r => parseTimeToMinutes(r[1])).filter(t => t !== null);
+  let elapsedMinutes = 0;
+  if (times.length) {
+    elapsedMinutes = Math.max(...times) - Math.min(...times);
+  }
+
+  const totalSets = rows.reduce((sum, r) => sum + (parseFloat(r[4]) || 1), 0);
+  const flooredMinutes = totalSets * CALORIE_MIN_MINUTES_PER_SET;
+
+  let durationMinutes = Math.max(elapsedMinutes, flooredMinutes, CALORIE_MIN_SESSION_MINUTES);
+  durationMinutes = Math.min(durationMinutes, CALORIE_MAX_SESSION_MINUTES);
+  const durationHours = durationMinutes / 60;
 
   const categories = Array.from(new Set(rows.map(r => allExerciseCategoryIndex[r[2]] || 'strength')));
   const avgMet = categories.reduce((sum, c) => sum + (MET_TABLE[c] || DEFAULT_MET), 0) / categories.length;
