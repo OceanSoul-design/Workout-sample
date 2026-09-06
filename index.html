@@ -652,20 +652,32 @@ function escapeHtml(str) {
 let currentGroup = 'Abs';
 let knownExercisesByGroup = {};
 
-// Maps our muscle-group tabs to ExerciseDB's bodyPart values.
-// Comma-separated values get merged into one dropdown list.
-const BODYPART_MAP = {
-  Abs: 'waist',
-  Bicep: 'upper arms',
-  Chest: 'chest',
-  Shoulders: 'shoulders',
-  Legs: 'upper legs,lower legs',
-  Back: 'back',
+// free-exercise-db: public-domain dataset, no API key, no rate limits.
+// https://github.com/yuhonas/free-exercise-db
+const FREE_EXERCISE_DB_JSON = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json';
+const FREE_EXERCISE_IMG_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
+
+// Maps our muscle-group tabs to this dataset's primaryMuscles vocabulary.
+const MUSCLE_MAP = {
+  Abs: ['abdominals'],
+  Bicep: ['biceps'],
+  Chest: ['chest'],
+  Shoulders: ['shoulders'],
+  Legs: ['quadriceps', 'hamstrings', 'glutes', 'calves', 'abductors', 'adductors'],
+  Back: ['lats', 'middle back', 'lower back', 'traps'],
 };
 
-// Client-side cache so switching tabs back and forth doesn't
-// re-hit the backend/RapidAPI every time.
-let exerciseOptionsCache = {};
+// Loaded once, reused for every group/tab after that.
+let exerciseDb = null;
+let exerciseDbPromise = null;
+function loadExerciseDb() {
+  if (exerciseDbPromise) return exerciseDbPromise;
+  exerciseDbPromise = fetch(FREE_EXERCISE_DB_JSON)
+    .then(r => r.json())
+    .then(data => { exerciseDb = data; return data; })
+    .catch(err => { exerciseDbPromise = null; throw err; });
+  return exerciseDbPromise;
+}
 
 function populateExerciseSelect(names) {
   const select = document.getElementById('exercise-input');
@@ -683,27 +695,17 @@ async function loadExerciseOptions(group) {
   document.getElementById('submit-btn').disabled = true;
   document.getElementById('ex-info-btn').style.display = 'none';
   updateSubmitLabel();
-
-  if (exerciseOptionsCache[group]) {
-    populateExerciseSelect(exerciseOptionsCache[group]);
-    select.disabled = false;
-    return;
-  }
-
   select.innerHTML = '<option value="">Loading exercises...</option>';
 
   try {
-    const bodypart = BODYPART_MAP[group] || '';
-    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
-              + '&action=exerciseList&bodypart=' + encodeURIComponent(bodypart);
-    const res = await fetch(url);
-    const json = await res.json();
-    if (json.ok && json.names) {
-      exerciseOptionsCache[group] = json.names;
-      populateExerciseSelect(json.names);
-    } else {
-      select.innerHTML = '<option value="">Couldn\'t load exercises</option>';
-    }
+    await loadExerciseDb();
+    const muscles = MUSCLE_MAP[group] || [];
+    const names = Array.from(new Set(
+      exerciseDb
+        .filter(ex => ex.primaryMuscles && ex.primaryMuscles.some(m => muscles.includes(m)))
+        .map(ex => ex.name)
+    )).sort();
+    populateExerciseSelect(names);
   } catch (e) {
     select.innerHTML = '<option value="">Couldn\'t load exercises</option>';
   }
@@ -1092,23 +1094,22 @@ async function openExOverlay(name, group) {
   document.getElementById('ex-overlay').classList.add('open');
 
   try {
-    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
-              + '&action=exercise&name=' + encodeURIComponent(name);
-    const res = await fetch(url);
-    const json = await res.json();
-    const ex = json.exercise;
+    await loadExerciseDb();
+    const ex = exerciseDb.find(e => e.name === name);
 
-    if (ex && ex.gifUrl) {
+    if (ex && ex.images && ex.images.length) {
       document.getElementById('ex-gif').innerHTML =
-        `<img src="${ex.gifUrl}" alt="${escapeHtml(name)}">`;
+        `<img src="${FREE_EXERCISE_IMG_BASE + ex.images[0]}" alt="${escapeHtml(name)}">`;
     } else {
       document.getElementById('ex-gif').innerHTML =
         '<div class="ex-gif-loading">No image found</div>';
     }
 
-    if (ex && ex.target) {
+    if (ex && ex.primaryMuscles && ex.primaryMuscles.length) {
       document.getElementById('ex-primary-tags').innerHTML =
-        `<span class="ex-muscle-tag primary">${escapeHtml(ex.target)}</span>`;
+        ex.primaryMuscles.map(m =>
+          `<span class="ex-muscle-tag primary">${escapeHtml(m)}</span>`
+        ).join('');
     }
 
     if (ex && ex.secondaryMuscles && ex.secondaryMuscles.length) {
