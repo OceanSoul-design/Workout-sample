@@ -250,7 +250,7 @@
   #routine-detail-overlay.open, #new-routine-overlay.open { display: flex; }
 
   /* Workout recap / calorie history overlays */
-  #workout-recap-overlay, #calorie-history-overlay {
+  #workout-recap-overlay {
     position: fixed;
     inset: 0;
     background: var(--bg);
@@ -259,7 +259,7 @@
     flex-direction: column;
     overflow-y: auto;
   }
-  #workout-recap-overlay.open, #calorie-history-overlay.open { display: flex; }
+  #workout-recap-overlay.open { display: flex; }
 
   #body-weight-overlay {
     position: fixed;
@@ -660,7 +660,6 @@
 
   <div class="profile-tabs" id="profile-tabs"></div>
 
-  <div id="log-calorie-estimate"></div>
   <div style="margin-bottom:16px;">
     <button id="finish-workout-btn" style="width:100%;padding:12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-weight:600;cursor:pointer;">🏁 Finish Workout</button>
   </div>
@@ -729,7 +728,6 @@
     </div>
     <button class="refresh-btn" id="refresh-btn">Refresh</button>
   </div>
-  <div id="calorie-estimate"></div>
   <div id="progress-content"><div class="loading">Loading...</div></div>
 </div>
 
@@ -743,6 +741,20 @@
     <button class="refresh-btn" id="new-routine-btn">+ New</button>
   </div>
   <div id="routines-content"><div class="loading">Loading...</div></div>
+</div>
+
+<!-- CALORIES PAGE -->
+<div class="page" id="page-calories">
+  <div class="progress-header">
+    <div>
+      <h1>Calories</h1>
+      <p class="subtitle">Rough MET-based estimate</p>
+    </div>
+    <button class="refresh-btn" id="calories-refresh-btn">Refresh</button>
+  </div>
+  <div id="calories-today"><div class="loading">Loading...</div></div>
+  <p class="subtitle" style="margin-top:16px; margin-bottom:8px;">History</p>
+  <div id="calories-history-inline"></div>
 </div>
 
 <!-- NAV -->
@@ -764,6 +776,12 @@
       <rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/>
     </svg>
     Routines
+  </button>
+  <button data-page="calories">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 2c0 4-5 6-5 11a5 5 0 0 0 10 0c0-2-1-3-2-4.5 0 1.5-1 2.5-2 2.5-1 0-1.5-1-1.5-2.5C11.5 6 12 4 12 2z"/>
+    </svg>
+    Calories
   </button>
 </nav>
 
@@ -893,16 +911,6 @@
     <button class="ex-close-btn" onclick="closeWorkoutRecapOverlay()">×</button>
   </div>
   <div id="workout-recap-body"></div>
-</div>
-
-<!-- CALORIE HISTORY OVERLAY -->
-<div id="calorie-history-overlay">
-  <div class="entries-overlay-header">
-    <h2>Calorie history</h2>
-    <button class="ex-close-btn" onclick="closeCalorieHistoryOverlay()">×</button>
-  </div>
-  <p class="subtitle" style="padding:12px 16px 0;">Last 30 days with logged workouts</p>
-  <div id="calorie-history-list"></div>
 </div>
 
 <!-- BODY WEIGHT OVERLAY -->
@@ -1263,7 +1271,7 @@ function renderProfileTabs() {
       updateSubmitLabel();
       loadProgress(); // keep Progress in sync if it's already loaded once
       loadRoutines(); // and Routines, since it's per-profile
-      renderLogPageCalorieEstimate();
+      loadCaloriesPage(); // and Calories, since it's per-profile too
       if (!alreadyActive) showToast(`Now logging as ${name}`);
     };
     el.appendChild(btn);
@@ -1292,7 +1300,6 @@ async function fetchHistory() {
     if (json.ok) {
       indexHistory(json.rows);
       allLogRows = json.rows.slice(1);
-      renderLogPageCalorieEstimate();
     }
     return json;
   } catch (e) {
@@ -1411,7 +1418,8 @@ document.getElementById('submit-btn').onclick = async () => {
   if (res && res.ok) {
     showToast('✓ Logged');
     // Mirror this entry into our local cache (same column order the backend
-    // uses) so the live calorie estimate updates instantly, no refetch needed.
+    // uses) so the Calories tab reflects it instantly next time it's opened,
+    // with no refetch needed.
     const repsN = parseFloat(payload.reps) || 0;
     const setsN = parseFloat(payload.sets) || 0;
     const weightN = parseFloat(payload.weight) || 0;
@@ -1420,7 +1428,6 @@ document.getElementById('submit-btn').onclick = async () => {
       payload.energy, payload.bodyweight, payload.howlong, repsN * setsN * weightN,
       payload.user, payload.group, payload.id,
     ]);
-    renderLogPageCalorieEstimate();
     // Clear numeric fields but keep the selected exercise so repeat
     // sets are fast (dropdown selection stays as-is).
     ['sets','reps','weight','energy','bodyweight','howlong'].forEach(id => {
@@ -1452,6 +1459,7 @@ document.querySelectorAll('nav button').forEach(btn => {
     document.getElementById('page-' + btn.dataset.page).classList.add('active');
     if (btn.dataset.page === 'progress') loadProgress();
     if (btn.dataset.page === 'routines') loadRoutines();
+    if (btn.dataset.page === 'calories') loadCaloriesPage();
   };
 });
 
@@ -1565,23 +1573,10 @@ function buildCalorieSectionHtml(profile) {
       <div class="calorie-label">${calorieLabel}</div>
       <div class="calorie-note">${exerciseCount} exercise set${exerciseCount === 1 ? '' : 's'} logged today for ${escapeHtml(profile)}</div>
       <div class="calorie-note">${weightLine}</div>
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button onclick="openBodyWeightOverlay()" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;cursor:pointer;">Update weight</button>
-        <button onclick="openCalorieHistoryOverlay()" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;cursor:pointer;">View history</button>
+      <div style="margin-top:10px;">
+        <button onclick="openBodyWeightOverlay()" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;cursor:pointer;">Update weight</button>
       </div>
     </div>`;
-}
-
-function renderDailyCalorieEstimate() {
-  document.getElementById('calorie-estimate').innerHTML = buildCalorieSectionHtml(getCurrentProfile());
-}
-
-// Live version shown right on the Log page — updates instantly from data
-// already in the browser, no network round trip needed after initial load.
-function renderLogPageCalorieEstimate() {
-  const el = document.getElementById('log-calorie-estimate');
-  if (!el) return;
-  el.innerHTML = buildCalorieSectionHtml(getCurrentProfile());
 }
 
 // ---- Calorie history ----
@@ -1604,15 +1599,18 @@ function getCalorieHistoryForProfile(profile, maxDays) {
   });
 }
 
-function renderCalorieHistoryList() {
-  const container = document.getElementById('calorie-history-list');
-  const activeProfile = getCurrentProfile();
-  const history = getCalorieHistoryForProfile(activeProfile, 30);
+// Renders the whole Calories tab: today's card + the history list beneath it.
+function loadCaloriesPage() {
+  const profile = getCurrentProfile();
+  document.getElementById('calories-today').innerHTML = buildCalorieSectionHtml(profile);
+
+  const historyContainer = document.getElementById('calories-history-inline');
+  const history = getCalorieHistoryForProfile(profile, 30);
   if (!history.length) {
-    container.innerHTML = '<div class="entries-empty">No workout history yet.</div>';
+    historyContainer.innerHTML = '<div class="entries-empty">No workout history yet.</div>';
     return;
   }
-  container.innerHTML = history.map(h => `
+  historyContainer.innerHTML = history.map(h => `
     <div class="entry-row">
       <div class="entry-row-header">
         <span>${escapeHtml(h.date)}</span>
@@ -1623,12 +1621,10 @@ function renderCalorieHistoryList() {
   `).join('');
 }
 
-function openCalorieHistoryOverlay() {
-  document.getElementById('calorie-history-overlay').classList.add('open');
-  renderCalorieHistoryList();
-}
-function closeCalorieHistoryOverlay() {
-  document.getElementById('calorie-history-overlay').classList.remove('open');
+async function refreshCaloriesPage() {
+  document.getElementById('calories-today').innerHTML = '<div class="loading">Loading...</div>';
+  await fetchHistory();
+  loadCaloriesPage();
 }
 
 // ---- Workout recap ----
@@ -1714,7 +1710,6 @@ async function loadProgress() {
     //       7=Body Weight, 8=How Long, 9=Volume, 10=User, 11=Group
     indexHistory(rows); // keep Log page's autocomplete fresh too
     allLogRows = rows.slice(1); // cache raw rows (no header) for the entries-edit overlay
-    renderDailyCalorieEstimate();
     const activeProfile = getCurrentProfile();
     const data = rows.slice(1).filter(r => r[2] && r[10] === activeProfile);
 
@@ -1889,6 +1884,7 @@ function drawSparkline(canvasId, values, color) {
 }
 
 document.getElementById('refresh-btn').onclick = loadProgress;
+document.getElementById('calories-refresh-btn').onclick = refreshCaloriesPage;
 
 // ---- Exercise detail overlay ----
 let overlayExerciseName = '';
@@ -2302,7 +2298,7 @@ document.getElementById('bw-submit').onclick = async () => {
       payload.energy, payload.bodyweight, payload.howlong, 0, payload.user, payload.group, payload.id,
     ]);
     closeBodyWeightOverlay();
-    renderLogPageCalorieEstimate();
+    loadCaloriesPage();
     showToast('✓ Weight saved');
   } else {
     showToast('Could not save — try again', true);
