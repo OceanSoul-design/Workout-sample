@@ -9,7 +9,7 @@ const LOCKOUT_SECONDS = 300;
 const ID_COL_INDEX = 12;
 
 // CustomExercises sheet columns (0-based):
-// 0=Id, 1=Name, 2=Group, 3=ImageUrl, 4=PrimaryMuscle, 5=SecondaryMuscles, 6=AddedBy, 7=DateAdded
+// 0=Id, 1=Name, 2=Group, 3=ImageUrl, 4=PrimaryMuscle, 5=SecondaryMuscles, 6=AddedBy, 7=DateAdded, 8=Type
 
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -23,7 +23,7 @@ function getCustomSheet_() {
   let sheet = ss.getSheetByName(CUSTOM_SHEET_NAME);
   if (!sheet) {
     sheet = ss.insertSheet(CUSTOM_SHEET_NAME);
-    sheet.appendRow(['Id', 'Name', 'Group', 'ImageUrl', 'PrimaryMuscle', 'SecondaryMuscles', 'AddedBy', 'DateAdded']);
+    sheet.appendRow(['Id', 'Name', 'Group', 'ImageUrl', 'PrimaryMuscle', 'SecondaryMuscles', 'AddedBy', 'DateAdded', 'Type']);
   }
   return sheet;
 }
@@ -137,6 +137,7 @@ function customRowValuesFromPayload_(payload) {
     payload.secondaryMuscles || '',
     payload.user || '',
     payload.date || '',
+    payload.type || '',
   ];
 }
 
