@@ -216,6 +216,27 @@
     gap: 16px;
   }
 
+  /* Manage custom exercises overlay */
+  #manage-custom-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 215;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #manage-custom-overlay.open { display: flex; }
+  .custom-ex-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 8px;
+    width: 100%;
+  }
+
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -583,12 +604,14 @@
 
   <div class="profile-tabs" id="profile-tabs"></div>
 
-  <div class="group-tabs" id="group-tabs"></div>
-
   <div class="exercise-input-wrap">
     <input type="text" id="exercise-search" placeholder="Loading exercises..." autocomplete="off" disabled>
     <input type="hidden" id="exercise-input">
     <div class="combo-dropdown" id="exercise-dropdown"></div>
+  </div>
+  <p class="subtitle" id="selected-group-line" style="display:none; margin:8px 0 4px; font-size:12px;"></p>
+  <div style="text-align:right; margin-bottom:16px;">
+    <button id="manage-custom-btn" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:0;">Manage custom exercises</button>
   </div>
 
   <button id="ex-info-btn">👁 Preview exercise</button>
@@ -732,6 +755,15 @@
   </div>
 </div>
 
+<!-- MANAGE CUSTOM EXERCISES OVERLAY -->
+<div id="manage-custom-overlay">
+  <div class="entries-overlay-header">
+    <h2>Custom exercises</h2>
+    <button class="ex-close-btn" onclick="closeManageCustomOverlay()">×</button>
+  </div>
+  <div id="custom-exercises-list"></div>
+</div>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <h2>Workout Log</h2>
@@ -807,7 +839,8 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-let currentGroup = 'Abs';
+let selectedExerciseGroup = ''; // derived from whichever exercise is currently selected
+let allExerciseIndex = {}; // exercise name -> derived/assigned muscle group
 let knownExercisesByGroup = {};
 let allLogRows = []; // raw sheet rows (no header), cached for the entries-edit overlay
 
@@ -875,10 +908,14 @@ let currentExerciseNames = [];
 function renderComboOptions(filterText) {
   const dropdown = document.getElementById('exercise-dropdown');
   const filter = filterText.trim().toLowerCase();
-  const matches = filter
-    ? currentExerciseNames.filter(n => n.toLowerCase().includes(filter))
-    : currentExerciseNames;
 
+  if (!filter) {
+    dropdown.innerHTML = '<div class="combo-empty">Type to search exercises...</div>';
+    dropdown.classList.add('open');
+    return;
+  }
+
+  const matches = currentExerciseNames.filter(n => n.toLowerCase().includes(filter)).slice(0, 50);
   let html = '';
   if (!matches.length) {
     html += '<div class="combo-empty">No matches</div>';
@@ -887,9 +924,7 @@ function renderComboOptions(filterText) {
       `<div class="combo-option" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`
     ).join('');
   }
-  if (filterText.trim()) {
-    html += `<div class="combo-option combo-add" data-add="${escapeHtml(filterText.trim())}">+ Add "${escapeHtml(filterText.trim())}" as a new exercise</div>`;
-  }
+  html += `<div class="combo-option combo-add" data-add="${escapeHtml(filterText.trim())}">+ Add "${escapeHtml(filterText.trim())}" as a new exercise</div>`;
 
   dropdown.innerHTML = html;
   dropdown.classList.add('open');
@@ -908,7 +943,7 @@ function selectExercise(name) {
 
 // User-added exercises not in the free-exercise-db dataset, stored in a
 // second sheet tab ("CustomExercises") and shared across both profiles.
-let customExercises = []; // {id, name, group, imageUrl, primaryMuscle, secondaryMuscles}
+let customExercises = []; // {id, name, group, imageUrl, primaryMuscle, secondaryMuscles, user, date}
 let customExercisesLoadedOnce = false;
 
 async function loadCustomExercises(force) {
@@ -920,7 +955,7 @@ async function loadCustomExercises(force) {
     if (json.ok && json.rows) {
       customExercises = json.rows.slice(1).filter(r => r[1]).map(r => ({
         id: r[0], name: r[1], group: r[2], imageUrl: r[3],
-        primaryMuscle: r[4], secondaryMuscles: r[5],
+        primaryMuscle: r[4], secondaryMuscles: r[5], user: r[6], date: r[7],
       }));
     }
     customExercisesLoadedOnce = true;
@@ -929,7 +964,38 @@ async function loadCustomExercises(force) {
   }
 }
 
-async function loadExerciseOptions(group) {
+// A dataset exercise's group is derived from its own muscle data — first
+// group (in GROUP_NAMES order) whose muscle list intersects the exercise's
+// primary or secondary muscles. Custom exercises already store their group
+// directly, since that was chosen explicitly when adding them.
+function deriveGroupForMuscles(primary, secondary) {
+  const all = [...(primary || []), ...(secondary || [])];
+  for (const g of GROUP_NAMES) {
+    const muscles = MUSCLE_MAP[g] || [];
+    if (all.some(m => muscles.includes(m))) return g;
+  }
+  return 'Other';
+}
+
+function groupForExerciseName(name) {
+  return allExerciseIndex[name] || 'Other';
+}
+
+function updateSelectedGroupBadge(name) {
+  const line = document.getElementById('selected-group-line');
+  if (!name) {
+    line.style.display = 'none';
+    selectedExerciseGroup = '';
+    return;
+  }
+  selectedExerciseGroup = groupForExerciseName(name);
+  line.textContent = 'Muscle group: ' + selectedExerciseGroup;
+  line.style.display = 'block';
+}
+
+// Loads (or reloads) the full searchable exercise list: the entire
+// free-exercise-db dataset plus every custom exercise, all in one pool.
+async function loadAllExerciseOptions() {
   const searchInput = document.getElementById('exercise-search');
   searchInput.disabled = true;
   searchInput.value = '';
@@ -939,25 +1005,26 @@ async function loadExerciseOptions(group) {
   document.getElementById('submit-btn').disabled = true;
   document.getElementById('ex-info-btn').style.display = 'none';
   updateSubmitLabel();
+  updateSelectedGroupBadge('');
 
   try {
     await loadExerciseDb();
     await loadCustomExercises();
-    const muscles = MUSCLE_MAP[group] || [];
-    const datasetNames = exerciseDb
-      .filter(ex => {
-        const primary = ex.primaryMuscles || [];
-        const secondary = ex.secondaryMuscles || [];
-        return primary.some(m => muscles.includes(m)) || secondary.some(m => muscles.includes(m));
-      })
-      .map(ex => ex.name);
-    const customNames = customExercises.filter(c => c.group === group).map(c => c.name);
-    currentExerciseNames = Array.from(new Set([...datasetNames, ...customNames])).sort();
+    const index = {};
+    exerciseDb.forEach(ex => {
+      index[ex.name] = deriveGroupForMuscles(ex.primaryMuscles, ex.secondaryMuscles);
+    });
+    customExercises.forEach(c => {
+      index[c.name] = c.group || 'Other';
+    });
+    allExerciseIndex = index;
+    currentExerciseNames = Object.keys(index).sort();
     searchInput.placeholder = currentExerciseNames.length
       ? 'Search exercises...'
       : 'No exercises found';
   } catch (e) {
     currentExerciseNames = [];
+    allExerciseIndex = {};
     searchInput.placeholder = "Couldn't load exercises";
   }
   searchInput.disabled = false;
@@ -995,23 +1062,6 @@ function renderProfileTabs() {
 }
 renderProfileTabs();
 
-// ---- Build group tabs ----
-const groupTabsEl = document.getElementById('group-tabs');
-GROUP_NAMES.forEach(grp => {
-  const btn = document.createElement('button');
-  btn.className = 'group-tab' + (grp === 'Abs' ? ' active' : '');
-  btn.dataset.group = grp;
-  btn.textContent = grp;
-  btn.onclick = () => selectGroup(grp);
-  groupTabsEl.appendChild(btn);
-});
-
-function selectGroup(grp) {
-  currentGroup = grp;
-  document.querySelectorAll('.group-tab').forEach(b => b.classList.toggle('active', b.dataset.group === grp));
-  loadExerciseOptions(grp);
-}
-
 // Still used to group Progress-tab history by muscle group (unrelated
 // to the exercise picker, which now comes straight from ExerciseDB).
 function indexHistory(rows) {
@@ -1044,6 +1094,7 @@ exerciseInput.addEventListener('change', () => {
   document.getElementById('submit-btn').disabled = !val;
   document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
   updateSubmitLabel();
+  updateSelectedGroupBadge(val);
   if (val) document.getElementById('sets').focus();
 });
 
@@ -1109,7 +1160,7 @@ document.getElementById('optional-toggle').onclick = function() {
 
 // ---- Preview exercise button ----
 document.getElementById('ex-info-btn').onclick = () => {
-  openExOverlay(exerciseInput.value.trim(), currentGroup);
+  openExOverlay(exerciseInput.value.trim(), selectedExerciseGroup);
 };
 
 // ---- Submit ----
@@ -1134,7 +1185,7 @@ document.getElementById('submit-btn').onclick = async () => {
     date: now.toLocaleDateString('en-US'),
     time: now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
     exercise: exercise,
-    group: currentGroup,
+    group: selectedExerciseGroup,
     reps: reps || '',
     sets: sets || '',
     weight: weight || '',
@@ -1617,7 +1668,7 @@ populateNewExerciseGroupSelect();
 
 function openAddExerciseOverlay(prefillName) {
   document.getElementById('new-ex-name').value = prefillName || '';
-  document.getElementById('new-ex-group').value = currentGroup;
+  document.getElementById('new-ex-group').value = selectedExerciseGroup || GROUP_NAMES[0];
   document.getElementById('new-ex-image').value = '';
   document.getElementById('new-ex-primary').value = '';
   document.getElementById('new-ex-secondary').value = '';
@@ -1634,19 +1685,18 @@ document.getElementById('new-ex-submit').onclick = async () => {
   const imageUrl = document.getElementById('new-ex-image').value.trim();
   const primaryMuscle = document.getElementById('new-ex-primary').value.trim();
   const secondaryMuscles = document.getElementById('new-ex-secondary').value.trim();
+  const id = generateId();
+  const user = getCurrentProfile();
+  const date = new Date().toLocaleDateString('en-US');
 
   const btn = document.getElementById('new-ex-submit');
   btn.disabled = true;
   btn.textContent = 'Adding...';
 
-  const now = new Date();
   const res = await sendEntryOp({
     op: 'addCustomExercise',
     token: getToken(),
-    id: generateId(),
-    name, group, imageUrl, primaryMuscle, secondaryMuscles,
-    user: getCurrentProfile(),
-    date: now.toLocaleDateString('en-US'),
+    id, name, group, imageUrl, primaryMuscle, secondaryMuscles, user, date,
   });
 
   btn.disabled = false;
@@ -1654,21 +1704,108 @@ document.getElementById('new-ex-submit').onclick = async () => {
 
   if (res && res.ok) {
     closeAddExerciseOverlay();
-    customExercises.push({ id: '', name, group, imageUrl, primaryMuscle, secondaryMuscles });
-    if (group === currentGroup) {
-      if (!currentExerciseNames.includes(name)) {
-        currentExerciseNames.push(name);
-        currentExerciseNames.sort();
-      }
-      selectExercise(name);
-      showToast('✓ Exercise added');
-    } else {
-      showToast(`✓ Added to ${group} — switch tabs to use it`);
-    }
+    await loadAllExerciseOptions();
+    selectExercise(name);
+    showToast('✓ Exercise added');
   } else {
     showToast('Could not add exercise — try again', true);
   }
 };
+
+// ---- Manage custom exercises overlay ----
+document.getElementById('manage-custom-btn').onclick = async () => {
+  document.getElementById('manage-custom-overlay').classList.add('open');
+  await loadCustomExercises(true); // force a fresh fetch
+  renderCustomExercisesList();
+};
+function closeManageCustomOverlay() {
+  document.getElementById('manage-custom-overlay').classList.remove('open');
+}
+
+function renderCustomExercisesList() {
+  const container = document.getElementById('custom-exercises-list');
+  if (!customExercises.length) {
+    container.innerHTML = '<div class="entries-empty">No custom exercises yet.</div>';
+    return;
+  }
+  container.innerHTML = customExercises.map(c => `
+    <div class="entry-row custom-ex-row" data-id="${escapeHtml(c.id)}">
+      <div class="entry-edit-fields" style="grid-template-columns:1fr; margin-bottom:8px;">
+        <input type="text" class="custom-name" placeholder="Name" value="${escapeHtml(c.name)}">
+      </div>
+      <div class="entry-edit-fields" style="grid-template-columns:1fr 1fr;">
+        <select class="custom-group">
+          ${GROUP_NAMES.map(g => `<option value="${g}" ${g === c.group ? 'selected' : ''}>${g}</option>`).join('')}
+        </select>
+        <input type="text" class="custom-image" placeholder="Image URL" value="${escapeHtml(c.imageUrl || '')}">
+      </div>
+      <div class="entry-edit-fields">
+        <input type="text" class="custom-primary" placeholder="Primary muscle" value="${escapeHtml(c.primaryMuscle || '')}">
+        <input type="text" class="custom-secondary" placeholder="Secondary muscles" value="${escapeHtml(c.secondaryMuscles || '')}" style="grid-column: span 2;">
+      </div>
+      <div class="entry-actions">
+        <button class="entry-btn save" data-action="save">Save</button>
+        <button class="entry-btn delete" data-action="delete">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('custom-exercises-list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.entry-btn');
+  if (!btn) return;
+  const rowEl = btn.closest('.entry-row');
+  const id = rowEl.dataset.id;
+  const original = customExercises.find(c => c.id === id);
+  if (!original) {
+    showToast("Couldn't find that exercise", true);
+    return;
+  }
+
+  if (btn.dataset.action === 'delete') {
+    if (!confirm(`Delete "${original.name}"? This can't be undone.`)) return;
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+    const res = await sendEntryOp({ op: 'deleteCustomExercise', token: getToken(), id });
+    if (res && res.ok) {
+      showToast('Exercise deleted');
+      await loadAllExerciseOptions();
+      renderCustomExercisesList();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Delete';
+      showToast('Delete failed — try again', true);
+    }
+  }
+
+  if (btn.dataset.action === 'save') {
+    const name = rowEl.querySelector('.custom-name').value.trim();
+    const group = rowEl.querySelector('.custom-group').value;
+    const imageUrl = rowEl.querySelector('.custom-image').value.trim();
+    const primaryMuscle = rowEl.querySelector('.custom-primary').value.trim();
+    const secondaryMuscles = rowEl.querySelector('.custom-secondary').value.trim();
+    if (!name) { showToast('Name required', true); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    const res = await sendEntryOp({
+      op: 'updateCustomExercise',
+      token: getToken(),
+      id, name, group, imageUrl, primaryMuscle, secondaryMuscles,
+      user: original.user || '',
+      date: original.date || '',
+    });
+    btn.disabled = false;
+    btn.textContent = 'Save';
+    if (res && res.ok) {
+      showToast('Exercise updated');
+      await loadAllExerciseOptions();
+      renderCustomExercisesList();
+    } else {
+      showToast('Update failed — try again', true);
+    }
+  }
+});
 </script>
 
 <script>
@@ -1682,7 +1819,7 @@ let checking = false;
 if (sessionStorage.getItem('authToken')) {
   document.getElementById('pin-screen').style.display = 'none';
   fetchHistory();
-  loadExerciseOptions(currentGroup);
+  loadAllExerciseOptions();
 }
 
 function setPadDisabled(disabled) {
@@ -1725,7 +1862,7 @@ async function checkPin() {
       sessionStorage.setItem('authToken', attempted);
       document.getElementById('pin-screen').style.display = 'none';
       fetchHistory();
-      loadExerciseOptions(currentGroup);
+      loadAllExerciseOptions();
       checking = false;
       return;
     }
