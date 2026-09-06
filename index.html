@@ -753,6 +753,10 @@
     <button class="ex-close-btn" onclick="closeAddExerciseOverlay()">×</button>
   </div>
   <div class="add-ex-body">
+    <div id="dup-warning" style="display:none; background:rgba(217,98,43,.15); border:1px solid var(--abs); border-radius:8px; padding:12px; font-size:13px; color:var(--text);">
+      Looks similar to <strong id="dup-warning-name"></strong>, already in the list.
+      <button id="dup-use-existing" style="margin-top:8px;width:100%;padding:8px;border-radius:8px;border:none;background:var(--abs);color:#fff;font-weight:600;cursor:pointer;">Use this instead</button>
+    </div>
     <div class="field">
       <label>Name</label>
       <input type="text" id="new-ex-name">
@@ -947,6 +951,24 @@ function loadExerciseDb() {
 // Names for the currently-loaded muscle group, filtered live as you type.
 let currentExerciseNames = [];
 
+// Common gym abbreviations, so typing the short form still finds the exercise
+// listed under its full name — helps avoid accidentally adding a duplicate
+// under a different name (e.g. typing "RDL" surfaces "Romanian Deadlift").
+const EXERCISE_ALIASES = {
+  'rdl': 'romanian deadlift',
+  'sldl': 'stiff legged deadlift',
+  'ohp': 'overhead press',
+  'bp': 'bench press',
+  'dl': 'deadlift',
+  'bss': 'bulgarian split squat',
+  'gm': 'good morning',
+  'sm': 'smith machine',
+  'lat pd': 'lat pulldown',
+  'pu': 'pull up',
+  'pushup': 'push up',
+  'pushups': 'push ups',
+};
+
 function renderComboOptions(filterText) {
   const dropdown = document.getElementById('exercise-dropdown');
   const filter = filterText.trim().toLowerCase();
@@ -957,7 +979,14 @@ function renderComboOptions(filterText) {
     return;
   }
 
-  const matches = currentExerciseNames.filter(n => n.toLowerCase().includes(filter)).slice(0, 50);
+  let matches = currentExerciseNames.filter(n => n.toLowerCase().includes(filter));
+  const aliasExpansion = EXERCISE_ALIASES[filter];
+  if (aliasExpansion) {
+    const aliasMatches = currentExerciseNames.filter(n => n.toLowerCase().includes(aliasExpansion));
+    matches = Array.from(new Set([...matches, ...aliasMatches]));
+  }
+  matches = matches.slice(0, 50);
+
   let html = '';
   if (!matches.length) {
     html += '<div class="combo-empty">No matches</div>';
@@ -1798,6 +1827,62 @@ function populateNewExerciseTypeSelect() {
 }
 populateNewExerciseTypeSelect();
 
+// Rough duplicate detector: checks a direct alias hit first, then falls back
+// to word-overlap similarity against every already-known exercise name.
+// Not exact — just a nudge to catch obvious cases like "RDL" vs "Romanian Deadlift".
+const DUP_STOPWORDS = ['with', 'the', 'a', 'an', 'and', 'to', 'in', 'on'];
+function findPossibleDuplicate(name) {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const aliasExpansion = EXERCISE_ALIASES[normalized];
+  if (aliasExpansion) {
+    const aliasHit = currentExerciseNames.find(n =>
+      n.toLowerCase() === aliasExpansion || n.toLowerCase().includes(aliasExpansion)
+    );
+    if (aliasHit) return aliasHit;
+  }
+
+  const words = normalized.split(/\s+/).filter(w => w.length > 2 && !DUP_STOPWORDS.includes(w));
+  if (!words.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+  currentExerciseNames.forEach(n => {
+    const nWords = n.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    if (!nWords.length) return;
+    const overlap = words.filter(w => nWords.includes(w)).length;
+    const score = overlap / Math.max(words.length, nWords.length);
+    if (score > bestScore) { bestScore = score; best = n; }
+  });
+
+  return bestScore >= 0.6 ? best : null;
+}
+
+function updateDupWarning(name) {
+  const banner = document.getElementById('dup-warning');
+  const match = findPossibleDuplicate(name);
+  if (match) {
+    document.getElementById('dup-warning-name').textContent = match;
+    banner.dataset.match = match;
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+    delete banner.dataset.match;
+  }
+}
+
+document.getElementById('new-ex-name').addEventListener('input', (e) => {
+  updateDupWarning(e.target.value);
+});
+
+document.getElementById('dup-use-existing').onclick = () => {
+  const match = document.getElementById('dup-warning').dataset.match;
+  if (!match) return;
+  closeAddExerciseOverlay();
+  selectExercise(match);
+};
+
 function openAddExerciseOverlay(prefillName) {
   document.getElementById('new-ex-name').value = prefillName || '';
   document.getElementById('new-ex-group').value = selectedExerciseGroup || GROUP_NAMES[0];
@@ -1805,6 +1890,7 @@ function openAddExerciseOverlay(prefillName) {
   document.getElementById('new-ex-image').value = '';
   document.getElementById('new-ex-primary').value = '';
   document.getElementById('new-ex-secondary').value = '';
+  updateDupWarning(prefillName || '');
   document.getElementById('add-exercise-overlay').classList.add('open');
 }
 function closeAddExerciseOverlay() {
