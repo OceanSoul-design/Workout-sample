@@ -237,6 +237,18 @@
     width: 100%;
   }
 
+  /* Routine overlays */
+  #routine-detail-overlay, #new-routine-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 218;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #routine-detail-overlay.open, #new-routine-overlay.open { display: flex; }
+
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -693,6 +705,18 @@
   <div id="progress-content"><div class="loading">Loading...</div></div>
 </div>
 
+<!-- ROUTINES PAGE -->
+<div class="page" id="page-routines">
+  <div class="progress-header">
+    <div>
+      <h1>Routines</h1>
+      <p class="subtitle">Your saved workout days</p>
+    </div>
+    <button class="refresh-btn" id="new-routine-btn">+ New</button>
+  </div>
+  <div id="routines-content"><div class="loading">Loading...</div></div>
+</div>
+
 <!-- NAV -->
 <nav>
   <button class="active" data-page="log">
@@ -706,6 +730,12 @@
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
     </svg>
     Progress
+  </button>
+  <button data-page="routines">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/>
+    </svg>
+    Routines
   </button>
 </nav>
 
@@ -794,6 +824,40 @@
   <div id="custom-exercises-list"></div>
 </div>
 
+<!-- ROUTINE DETAIL OVERLAY -->
+<div id="routine-detail-overlay">
+  <div class="entries-overlay-header">
+    <h2 id="routine-detail-name">Routine</h2>
+    <button class="ex-close-btn" onclick="closeRoutineDetailOverlay()">×</button>
+  </div>
+  <div style="padding:16px 16px 0;">
+    <button id="routine-delete-btn" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--error);background:none;color:var(--error);font-size:13px;cursor:pointer;">Delete this routine</button>
+  </div>
+  <div id="routine-exercise-list"></div>
+  <div style="padding:12px 16px 20px; border-top:1px solid var(--border); margin-top:8px;">
+    <p class="subtitle" style="margin-bottom:8px;">Add an exercise to this routine</p>
+    <div class="exercise-input-wrap">
+      <input type="text" id="routine-ex-search" placeholder="Search exercises..." autocomplete="off">
+      <div class="combo-dropdown" id="routine-ex-dropdown"></div>
+    </div>
+  </div>
+</div>
+
+<!-- NEW ROUTINE OVERLAY -->
+<div id="new-routine-overlay">
+  <div class="entries-overlay-header">
+    <h2>New routine</h2>
+    <button class="ex-close-btn" onclick="closeNewRoutineOverlay()">×</button>
+  </div>
+  <div class="add-ex-body">
+    <div class="field">
+      <label>Routine name</label>
+      <input type="text" id="new-routine-name" placeholder="e.g. Push Day">
+    </div>
+    <button class="submit-btn" id="new-routine-submit">Create routine</button>
+  </div>
+</div>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <h2>Workout Log</h2>
@@ -830,7 +894,7 @@ function getToken() {
 
 // Edit this list to add/remove people. Stored on the device (not
 // server-verified) since everyone shares one PIN.
-const PROFILES = ['Ethan', 'Sebastian'];
+const PROFILES = ['Ethan', 'Sebastian', 'Raynira'];
 
 function getCurrentProfile() {
   return localStorage.getItem('profile') || PROFILES[0];
@@ -1132,6 +1196,7 @@ function renderProfileTabs() {
       renderProfileTabs();
       updateSubmitLabel();
       loadProgress(); // keep Progress in sync if it's already loaded once
+      loadRoutines(); // and Routines, since it's per-profile
       if (!alreadyActive) showToast(`Now logging as ${name}`);
     };
     el.appendChild(btn);
@@ -1304,6 +1369,7 @@ document.querySelectorAll('nav button').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('page-' + btn.dataset.page).classList.add('active');
     if (btn.dataset.page === 'progress') loadProgress();
+    if (btn.dataset.page === 'routines') loadRoutines();
   };
 });
 
@@ -2032,6 +2098,224 @@ document.getElementById('custom-exercises-list').addEventListener('click', async
     }
   }
 });
+
+// ---- Routines ----
+let allRoutineRows = []; // raw rows: 0=Id,1=Profile,2=RoutineName,3=Exercise,4=Group,5=SortOrder
+let currentRoutineName = '';
+
+async function loadRoutines() {
+  const el = document.getElementById('routines-content');
+  el.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken()) + '&action=routines';
+    const res = await fetch(url);
+    const json = await res.json();
+    if (!json.ok) {
+      el.innerHTML = '<div class="empty-state">Could not load routines.</div>';
+      return;
+    }
+
+    allRoutineRows = json.rows.slice(1); // drop header row
+    const activeProfile = getCurrentProfile();
+    const mine = allRoutineRows.filter(r => r[1] === activeProfile);
+
+    const byRoutine = {};
+    mine.forEach(r => {
+      const name = r[2];
+      if (!byRoutine[name]) byRoutine[name] = [];
+      byRoutine[name].push(r);
+    });
+    Object.keys(byRoutine).forEach(name => {
+      byRoutine[name].sort((a, b) => (parseFloat(a[5]) || 0) - (parseFloat(b[5]) || 0));
+    });
+
+    const names = Object.keys(byRoutine).sort();
+    if (!names.length) {
+      el.innerHTML = '<div class="empty-state">No routines yet.<br>Tap + New to create one, like "Push Day".</div>';
+      return;
+    }
+
+    el.innerHTML = names.map(name => {
+      const exs = byRoutine[name];
+      return `
+        <div class="exercise-card routine-card" data-routine="${escapeHtml(name)}">
+          <div class="card-header">
+            <span class="card-name">${escapeHtml(name)}</span>
+            <span class="card-group" style="background:#6b7280">${exs.length} exercise${exs.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>`;
+    }).join('');
+
+    document.querySelectorAll('.routine-card').forEach(card => {
+      card.onclick = () => openRoutineDetailOverlay(card.dataset.routine);
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state">Couldn\'t load routines.</div>';
+  }
+}
+
+function openRoutineDetailOverlay(name) {
+  currentRoutineName = name;
+  document.getElementById('routine-detail-name').textContent = name;
+  document.getElementById('routine-ex-search').value = '';
+  closeRoutineComboDropdown();
+  document.getElementById('routine-detail-overlay').classList.add('open');
+  renderRoutineExerciseList();
+}
+function closeRoutineDetailOverlay() {
+  document.getElementById('routine-detail-overlay').classList.remove('open');
+}
+
+function renderRoutineExerciseList() {
+  const activeProfile = getCurrentProfile();
+  const today = new Date().toLocaleDateString('en-US');
+  const rows = allRoutineRows
+    .filter(r => r[1] === activeProfile && r[2] === currentRoutineName)
+    .sort((a, b) => (parseFloat(a[5]) || 0) - (parseFloat(b[5]) || 0));
+
+  const container = document.getElementById('routine-exercise-list');
+  if (!rows.length) {
+    container.innerHTML = '<div class="entries-empty">No exercises yet — add some below.</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(r => {
+    const id = r[0], exName = r[3], grp = r[4] || 'Other';
+    const doneToday = allLogRows.some(lr => lr[0] === today && lr[10] === activeProfile && lr[2] === exName);
+    return `
+      <div class="entry-row" data-id="${escapeHtml(id)}" data-exercise="${escapeHtml(exName)}" data-group="${escapeHtml(grp)}">
+        <div class="entry-row-header">
+          <span>${escapeHtml(exName)}</span>
+          <span class="card-group" style="background:${GROUP_COLORS[grp] || GROUP_COLORS.Other}">${escapeHtml(grp)}</span>
+        </div>
+        <div class="entry-actions">
+          <button class="entry-btn ${doneToday ? '' : 'save'}" data-action="log" ${doneToday ? 'disabled style="background:var(--border);color:var(--muted);"' : ''}>${doneToday ? '✓ Logged today' : 'Log this'}</button>
+          <button class="entry-btn delete" data-action="remove">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('routine-exercise-list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.entry-btn');
+  if (!btn || btn.disabled) return;
+  const rowEl = btn.closest('.entry-row');
+  const id = rowEl.dataset.id;
+  const exName = rowEl.dataset.exercise;
+  const grp = rowEl.dataset.group;
+
+  if (btn.dataset.action === 'log') {
+    closeRoutineDetailOverlay();
+    const logNavBtn = document.querySelector('nav button[data-page="log"]');
+    if (logNavBtn) logNavBtn.click();
+    if (!currentExerciseNames.includes(exName)) {
+      currentExerciseNames.push(exName);
+      currentExerciseNames.sort();
+    }
+    if (!allExerciseIndex[exName]) allExerciseIndex[exName] = grp;
+    selectExercise(exName);
+  }
+
+  if (btn.dataset.action === 'remove') {
+    if (!confirm(`Remove "${exName}" from ${currentRoutineName}?`)) return;
+    btn.disabled = true;
+    btn.textContent = 'Removing...';
+    const res = await sendEntryOp({ op: 'deleteRoutineExercise', token: getToken(), id });
+    if (res && res.ok) {
+      allRoutineRows = allRoutineRows.filter(r => r[0] !== id);
+      renderRoutineExerciseList();
+      showToast('Removed from routine');
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Remove';
+      showToast('Could not remove — try again', true);
+    }
+  }
+});
+
+document.getElementById('routine-delete-btn').onclick = async () => {
+  if (!confirm(`Delete the routine "${currentRoutineName}" and all its exercises? This can't be undone.`)) return;
+  const activeProfile = getCurrentProfile();
+  const res = await sendEntryOp({ op: 'deleteRoutine', token: getToken(), profile: activeProfile, routineName: currentRoutineName });
+  if (res && res.ok) {
+    allRoutineRows = allRoutineRows.filter(r => !(r[1] === activeProfile && r[2] === currentRoutineName));
+    closeRoutineDetailOverlay();
+    loadRoutines();
+    showToast('Routine deleted');
+  } else {
+    showToast('Could not delete — try again', true);
+  }
+};
+
+// Add-exercise-to-routine search (reuses the same merged exercise pool as the Log page)
+const routineExSearch = document.getElementById('routine-ex-search');
+function renderRoutineComboOptions(filterText) {
+  const dropdown = document.getElementById('routine-ex-dropdown');
+  const filter = filterText.trim().toLowerCase();
+  if (!filter) {
+    dropdown.innerHTML = '<div class="combo-empty">Type to search exercises...</div>';
+    dropdown.classList.add('open');
+    return;
+  }
+  const matches = currentExerciseNames.filter(n => n.toLowerCase().includes(filter)).slice(0, 30);
+  dropdown.innerHTML = matches.length
+    ? matches.map(n => `<div class="combo-option" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('')
+    : '<div class="combo-empty">No matches</div>';
+  dropdown.classList.add('open');
+}
+function closeRoutineComboDropdown() {
+  document.getElementById('routine-ex-dropdown').classList.remove('open');
+}
+routineExSearch.addEventListener('input', () => renderRoutineComboOptions(routineExSearch.value));
+routineExSearch.addEventListener('focus', () => renderRoutineComboOptions(routineExSearch.value));
+routineExSearch.addEventListener('blur', () => {
+  setTimeout(() => closeRoutineComboDropdown(), 100);
+});
+document.getElementById('routine-ex-dropdown').addEventListener('mousedown', async (e) => {
+  const opt = e.target.closest('.combo-option');
+  if (!opt) return;
+  e.preventDefault();
+  await addExerciseToRoutine(opt.dataset.name);
+});
+
+async function addExerciseToRoutine(name) {
+  const activeProfile = getCurrentProfile();
+  const grp = allExerciseIndex[name] || 'Other';
+  const existing = allRoutineRows.filter(r => r[1] === activeProfile && r[2] === currentRoutineName);
+  const nextOrder = existing.length ? Math.max(...existing.map(r => parseFloat(r[5]) || 0)) + 1 : 1;
+  const id = generateId();
+
+  routineExSearch.value = '';
+  closeRoutineComboDropdown();
+
+  const res = await sendEntryOp({
+    op: 'addRoutineExercise',
+    token: getToken(),
+    id, profile: activeProfile, routineName: currentRoutineName, exercise: name, group: grp, sortOrder: nextOrder,
+  });
+  if (res && res.ok) {
+    allRoutineRows.push([id, activeProfile, currentRoutineName, name, grp, nextOrder]);
+    renderRoutineExerciseList();
+    showToast('Added to routine');
+  } else {
+    showToast('Could not add — try again', true);
+  }
+}
+
+// New routine overlay
+document.getElementById('new-routine-btn').onclick = () => {
+  document.getElementById('new-routine-name').value = '';
+  document.getElementById('new-routine-overlay').classList.add('open');
+};
+function closeNewRoutineOverlay() {
+  document.getElementById('new-routine-overlay').classList.remove('open');
+}
+document.getElementById('new-routine-submit').onclick = () => {
+  const name = document.getElementById('new-routine-name').value.trim();
+  if (!name) { showToast('Enter a routine name', true); return; }
+  closeNewRoutineOverlay();
+  openRoutineDetailOverlay(name);
+};
 </script>
 
 <script>
