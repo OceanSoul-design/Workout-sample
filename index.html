@@ -1105,21 +1105,32 @@ async function openExOverlay(name, group) {
 
     if (ex && ex.images && ex.images.length) {
       const gifWrap = document.getElementById('ex-gif');
+      gifWrap.style.position = 'relative';
       gifWrap.innerHTML = `
         <img src="${FREE_EXERCISE_IMG_BASE + ex.images[0]}" alt="${escapeHtml(name)}">
         <div class="ex-frame-count" style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;">1 / ${ex.images.length}</div>
       `;
-      gifWrap.style.position = 'relative';
       const imgEl = gifWrap.querySelector('img');
       const counterEl = gifWrap.querySelector('.ex-frame-count');
 
       if (ex.images.length > 1) {
-        let frame = 0;
-        exGifInterval = setInterval(() => {
-          frame = (frame + 1) % ex.images.length;
-          imgEl.src = FREE_EXERCISE_IMG_BASE + ex.images[frame];
-          counterEl.textContent = (frame + 1) + ' / ' + ex.images.length;
-        }, 700);
+        const frameUrls = ex.images.map(p => FREE_EXERCISE_IMG_BASE + p);
+        const forThisName = name; // guard against a stale preload starting after overlay moved on
+
+        Promise.all(frameUrls.map(url => new Promise(resolve => {
+          const preloadImg = new Image();
+          preloadImg.onload = resolve;
+          preloadImg.onerror = resolve; // don't let one broken frame block the rest
+          preloadImg.src = url;
+        }))).then(() => {
+          if (overlayExerciseName !== forThisName) return; // overlay moved on while preloading
+          let frame = 0;
+          exGifInterval = setInterval(() => {
+            frame = (frame + 1) % frameUrls.length;
+            imgEl.src = frameUrls[frame];
+            counterEl.textContent = (frame + 1) + ' / ' + frameUrls.length;
+          }, 700);
+        });
       }
     } else {
       document.getElementById('ex-gif').innerHTML =
