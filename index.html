@@ -161,7 +161,7 @@
 
   /* Exercise input */
   .exercise-input-wrap { margin-bottom: 24px; }
-  .exercise-input-wrap input {
+  .exercise-input-wrap select {
     width: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -170,8 +170,14 @@
     font-size: 16px;
     padding: 14px;
     -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 20px;
   }
-  .exercise-input-wrap input:focus { outline: none; border-color: #4a4d5a; }
+  .exercise-input-wrap select:focus { outline: none; border-color: #4a4d5a; }
+  .exercise-input-wrap select:disabled { opacity: .6; }
 
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
@@ -463,8 +469,9 @@
   <div class="group-tabs" id="group-tabs"></div>
 
   <div class="exercise-input-wrap">
-    <input type="text" id="exercise-input" list="exercise-suggestions" placeholder="Type an exercise..." autocomplete="off">
-    <datalist id="exercise-suggestions"></datalist>
+    <select id="exercise-input">
+      <option value="">Loading exercises...</option>
+    </select>
   </div>
 
   <button id="ex-info-btn">👁 Preview exercise</button>
@@ -645,6 +652,64 @@ function escapeHtml(str) {
 let currentGroup = 'Abs';
 let knownExercisesByGroup = {};
 
+// Maps our muscle-group tabs to ExerciseDB's bodyPart values.
+// Comma-separated values get merged into one dropdown list.
+const BODYPART_MAP = {
+  Abs: 'waist',
+  Bicep: 'upper arms',
+  Chest: 'chest',
+  Shoulders: 'shoulders',
+  Legs: 'upper legs,lower legs',
+  Back: 'back',
+};
+
+// Client-side cache so switching tabs back and forth doesn't
+// re-hit the backend/RapidAPI every time.
+let exerciseOptionsCache = {};
+
+function populateExerciseSelect(names) {
+  const select = document.getElementById('exercise-input');
+  if (!names.length) {
+    select.innerHTML = '<option value="">No exercises found</option>';
+    return;
+  }
+  select.innerHTML = '<option value="">Choose an exercise...</option>' +
+    names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+
+async function loadExerciseOptions(group) {
+  const select = document.getElementById('exercise-input');
+  select.disabled = true;
+  document.getElementById('submit-btn').disabled = true;
+  document.getElementById('ex-info-btn').style.display = 'none';
+  updateSubmitLabel();
+
+  if (exerciseOptionsCache[group]) {
+    populateExerciseSelect(exerciseOptionsCache[group]);
+    select.disabled = false;
+    return;
+  }
+
+  select.innerHTML = '<option value="">Loading exercises...</option>';
+
+  try {
+    const bodypart = BODYPART_MAP[group] || '';
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
+              + '&action=exerciseList&bodypart=' + encodeURIComponent(bodypart);
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.ok && json.names) {
+      exerciseOptionsCache[group] = json.names;
+      populateExerciseSelect(json.names);
+    } else {
+      select.innerHTML = '<option value="">Couldn\'t load exercises</option>';
+    }
+  } catch (e) {
+    select.innerHTML = '<option value="">Couldn\'t load exercises</option>';
+  }
+  select.disabled = false;
+}
+
 // ---- Date subtitle ----
 document.getElementById('log-date').textContent =
   new Date().toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
@@ -691,21 +756,11 @@ GROUP_NAMES.forEach(grp => {
 function selectGroup(grp) {
   currentGroup = grp;
   document.querySelectorAll('.group-tab').forEach(b => b.classList.toggle('active', b.dataset.group === grp));
-  renderExerciseSuggestions();
+  loadExerciseOptions(grp);
 }
 
-// ---- Autocomplete suggestions, scoped to the active group ----
-function renderExerciseSuggestions() {
-  const dl = document.getElementById('exercise-suggestions');
-  dl.innerHTML = '';
-  const names = Array.from(knownExercisesByGroup[currentGroup] || []).sort();
-  names.forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    dl.appendChild(opt);
-  });
-}
-
+// Still used to group Progress-tab history by muscle group (unrelated
+// to the exercise picker, which now comes straight from ExerciseDB).
 function indexHistory(rows) {
   const data = rows.slice(1).filter(r => r[2]);
   const map = {};
@@ -716,7 +771,6 @@ function indexHistory(rows) {
     map[grp].add(name);
   });
   knownExercisesByGroup = map;
-  renderExerciseSuggestions();
 }
 
 async function fetchHistory() {
@@ -730,19 +784,14 @@ async function fetchHistory() {
   }
 }
 
-// ---- Exercise name input ----
+// ---- Exercise name dropdown ----
 const exerciseInput = document.getElementById('exercise-input');
-exerciseInput.addEventListener('input', () => {
+exerciseInput.addEventListener('change', () => {
   const val = exerciseInput.value.trim();
   document.getElementById('submit-btn').disabled = !val;
   document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
   updateSubmitLabel();
-});
-exerciseInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    document.getElementById('sets').focus(); // move forward, don't submit yet
-  }
+  if (val) document.getElementById('sets').focus();
 });
 
 document.getElementById('sets').addEventListener('keydown', (e) => {
@@ -810,11 +859,8 @@ document.getElementById('submit-btn').onclick = async () => {
       body: JSON.stringify(payload),
     });
     showToast('✓ Logged');
-    // Add it to this group's suggestions right away, and clear numeric
-    // fields — but keep the exercise name so repeat sets are fast.
-    if (!knownExercisesByGroup[currentGroup]) knownExercisesByGroup[currentGroup] = new Set();
-    knownExercisesByGroup[currentGroup].add(exercise);
-    renderExerciseSuggestions();
+    // Clear numeric fields but keep the selected exercise so repeat
+    // sets are fast (dropdown selection stays as-is).
     ['sets','reps','weight','energy','bodyweight','howlong'].forEach(id => {
       document.getElementById(id).value = '';
     });
@@ -1086,8 +1132,15 @@ function closeExOverlay() {
 }
 
 document.getElementById('ex-use-btn').onclick = () => {
+  const hasOption = Array.from(exerciseInput.options).some(o => o.value === overlayExerciseName);
+  if (!hasOption) {
+    const opt = document.createElement('option');
+    opt.value = overlayExerciseName;
+    opt.textContent = overlayExerciseName;
+    exerciseInput.insertBefore(opt, exerciseInput.firstChild.nextSibling || null);
+  }
   exerciseInput.value = overlayExerciseName;
-  exerciseInput.dispatchEvent(new Event('input'));
+  exerciseInput.dispatchEvent(new Event('change'));
   closeExOverlay();
   document.getElementById('sets').focus();
 };
@@ -1104,6 +1157,7 @@ let checking = false;
 if (sessionStorage.getItem('authToken')) {
   document.getElementById('pin-screen').style.display = 'none';
   fetchHistory();
+  loadExerciseOptions(currentGroup);
 }
 
 function setPadDisabled(disabled) {
@@ -1146,6 +1200,7 @@ async function checkPin() {
       sessionStorage.setItem('authToken', attempted);
       document.getElementById('pin-screen').style.display = 'none';
       fetchHistory();
+      loadExerciseOptions(currentGroup);
       checking = false;
       return;
     }
