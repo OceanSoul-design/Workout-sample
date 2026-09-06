@@ -936,3 +936,213 @@ async function checkPin() {
 
 </body>
 </html>
+/* Exercise detail overlay */
+#ex-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 200;
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+}
+#ex-overlay.open { display: flex; }
+
+.ex-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ex-overlay-header h2 { font-size: 18px; font-weight: 700; }
+.ex-close-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 28px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+
+.ex-body {
+  display: flex;
+  gap: 16px;
+  padding: 20px 16px;
+  flex: 1;
+}
+.ex-gif {
+  width: 48%;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+.ex-gif img {
+  width: 100%;
+  border-radius: var(--radius);
+}
+.ex-gif .ex-gif-loading {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+.ex-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ex-group-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+.ex-muscle-section h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.ex-muscle-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ex-muscle-tag {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ex-muscle-tag.primary {
+  background: var(--surface);
+  border: 1px solid var(--text);
+  color: var(--text);
+}
+.ex-muscle-tag.secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.ex-use-btn {
+  margin: 0 16px 24px;
+  width: calc(100% - 32px);
+  padding: 16px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (max-width: 360px) {
+  .ex-body { flex-direction: column; }
+  .ex-gif { width: 100%; }
+}<!-- EXERCISE DETAIL OVERLAY -->
+<div id="ex-overlay">
+  <div class="ex-overlay-header">
+    <h2 id="ex-overlay-name">Exercise</h2>
+    <button class="ex-close-btn" onclick="closeExOverlay()">×</button>
+  </div>
+  <div class="ex-body">
+    <div class="ex-gif" id="ex-gif">
+      <div class="ex-gif-loading">Loading...</div>
+    </div>
+    <div class="ex-info">
+      <span class="ex-group-badge" id="ex-group-badge"></span>
+      <div class="ex-muscle-section">
+        <h4>Primary muscle</h4>
+        <div class="ex-muscle-tags" id="ex-primary-tags"></div>
+      </div>
+      <div class="ex-muscle-section">
+        <h4>Secondary muscles</h4>
+        <div class="ex-muscle-tags" id="ex-secondary-tags"></div>
+      </div>
+    </div>
+  </div>
+  <button class="ex-use-btn" id="ex-use-btn">Use this exercise</button>
+</div>
+// ---- Exercise detail overlay ----
+let overlayExerciseName = '';
+
+async function openExOverlay(name, group) {
+  overlayExerciseName = name;
+  document.getElementById('ex-overlay-name').textContent = name;
+  document.getElementById('ex-gif').innerHTML = '<div class="ex-gif-loading">Loading...</div>';
+  document.getElementById('ex-primary-tags').innerHTML = '';
+  document.getElementById('ex-secondary-tags').innerHTML = '';
+  const badge = document.getElementById('ex-group-badge');
+  badge.textContent = group;
+  badge.style.background = GROUP_COLORS[group] || '#6b7280';
+  document.getElementById('ex-overlay').classList.add('open');
+
+  try {
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
+              + '&action=exercise&name=' + encodeURIComponent(name);
+    const res = await fetch(url);
+    const json = await res.json();
+    const ex = json.exercise;
+
+    if (ex && ex.gifUrl) {
+      document.getElementById('ex-gif').innerHTML =
+        `<img src="${ex.gifUrl}" alt="${escapeHtml(name)}">`;
+    } else {
+      document.getElementById('ex-gif').innerHTML =
+        '<div class="ex-gif-loading">No image found</div>';
+    }
+
+    if (ex && ex.target) {
+      document.getElementById('ex-primary-tags').innerHTML =
+        `<span class="ex-muscle-tag primary">${escapeHtml(ex.target)}</span>`;
+    }
+
+    if (ex && ex.secondaryMuscles && ex.secondaryMuscles.length) {
+      document.getElementById('ex-secondary-tags').innerHTML =
+        ex.secondaryMuscles.map(m =>
+          `<span class="ex-muscle-tag secondary">${escapeHtml(m)}</span>`
+        ).join('');
+    } else {
+      document.getElementById('ex-secondary-tags').innerHTML =
+        '<span style="color:var(--muted);font-size:13px">None listed</span>';
+    }
+
+  } catch(e) {
+    document.getElementById('ex-gif').innerHTML =
+      '<div class="ex-gif-loading">Couldn\'t load</div>';
+  }
+}
+
+function closeExOverlay() {
+  document.getElementById('ex-overlay').classList.remove('open');
+}
+
+document.getElementById('ex-use-btn').onclick = () => {
+  exerciseInput.value = overlayExerciseName;
+  exerciseInput.dispatchEvent(new Event('input'));
+  closeExOverlay();
+  document.getElementById('sets').focus();
+};
+<button id="ex-info-btn" onclick="openExOverlay(exerciseInput.value.trim(), currentGroup)" 
+  style="margin-top:8px;width:100%;padding:10px;background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer;display:none;">
+  👁 Preview exercise
+</button>
+exerciseInput.addEventListener('input', () => {
+  const val = exerciseInput.value.trim();
+  document.getElementById('submit-btn').disabled = !val;
+  document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
+  updateSubmitLabel();
+});
