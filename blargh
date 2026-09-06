@@ -2,6 +2,11 @@ const SHEET_NAME = 'Data';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 300;
 
+// Column layout (0-based):
+// 0=Date, 1=Time, 2=Type, 3=Reps, 4=Sets, 5=Weight, 6=Energy,
+// 7=Body Weight, 8=How Long, 9=Volume, 10=User, 11=Group, 12=Id
+const ID_COL_INDEX = 12;
+
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
@@ -38,6 +43,61 @@ function checkAuth_(token) {
   return { ok: true };
 }
 
+// Returns the 1-based sheet row number for a given entry id, or -1 if not found.
+function findRowIndexById_(sheet, id) {
+  if (!id) return -1;
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) { // skip header row
+    if (values[i][ID_COL_INDEX] === id) return i + 1; // sheet rows are 1-based
+  }
+  return -1;
+}
+
+function rowValuesFromPayload_(payload) {
+  const reps = parseFloat(payload.reps) || 0;
+  const sets = parseFloat(payload.sets) || 0;
+  const weight = parseFloat(payload.weight) || 0;
+  const volume = reps * sets * weight;
+  return [
+    payload.date || '',
+    payload.time || '',
+    payload.exercise || '',
+    payload.reps || '',
+    payload.sets || '',
+    payload.weight || '',
+    payload.energy || '',
+    payload.bodyweight || '',
+    payload.howlong || '',
+    volume,
+    payload.user || '',
+    payload.group || '',
+    payload.id || '',
+  ];
+}
+
+function createEntry_(payload) {
+  const sheet = getSheet_();
+  sheet.appendRow(rowValuesFromPayload_(payload));
+  return jsonOut_({ ok: true });
+}
+
+function updateEntry_(payload) {
+  const sheet = getSheet_();
+  const rowNum = findRowIndexById_(sheet, payload.id);
+  if (rowNum === -1) return jsonOut_({ ok: false, error: 'not_found' });
+  const values = rowValuesFromPayload_(payload);
+  sheet.getRange(rowNum, 1, 1, values.length).setValues([values]);
+  return jsonOut_({ ok: true });
+}
+
+function deleteEntry_(payload) {
+  const sheet = getSheet_();
+  const rowNum = findRowIndexById_(sheet, payload.id);
+  if (rowNum === -1) return jsonOut_({ ok: false, error: 'not_found' });
+  sheet.deleteRow(rowNum);
+  return jsonOut_({ ok: true });
+}
+
 function doGet(e) {
   const auth = checkAuth_(e.parameter.token);
   if (!auth.ok) return jsonOut_(auth);
@@ -60,24 +120,9 @@ function doPost(e) {
   }
   const auth = checkAuth_(payload.token);
   if (!auth.ok) return jsonOut_(auth);
-  const sheet = getSheet_();
-  const reps = parseFloat(payload.reps) || 0;
-  const sets = parseFloat(payload.sets) || 0;
-  const weight = parseFloat(payload.weight) || 0;
-  const volume = reps * sets * weight;
-  sheet.appendRow([
-    payload.date || '',
-    payload.time || '',
-    payload.exercise || '',
-    payload.reps || '',
-    payload.sets || '',
-    payload.weight || '',
-    payload.energy || '',
-    payload.bodyweight || '',
-    payload.howlong || '',
-    volume,
-    payload.user || '',
-    payload.group || '',
-  ]);
-  return jsonOut_({ ok: true });
+
+  const op = payload.op || 'create';
+  if (op === 'update') return updateEntry_(payload);
+  if (op === 'delete') return deleteEntry_(payload);
+  return createEntry_(payload);
 }
