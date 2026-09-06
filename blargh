@@ -108,4 +108,27 @@ function doPost(e) {
   ]);
 
   return jsonOut_({ ok: true });
-}
+}<!-- EXERCISE DETAIL OVERLAY -->
+<div id="ex-overlay">
+  <div class="ex-overlay-header">
+    <h2 id="ex-overlay-name">Exercise</h2>
+    <button class="ex-close-btn" onclick="closeExOverlay()">×</button>
+  </div>
+  <div class="ex-body">
+    <div class="ex-gif" id="ex-gif">
+      <div class="ex-gif-loading">Loading...</div>
+    </div>
+    <div class="ex-info">
+      <span class="ex-group-badge" id="ex-group-badge"></span>
+      <div class="ex-muscle-section">
+        <h4>Primary muscle</h4>
+        <div class="ex-muscle-tags" id="ex-primary-tags"></div>
+      </div>
+      <div class="ex-muscle-section">
+        <h4>Secondary muscles</h4>
+        <div class="ex-muscle-tags" id="ex-secondary-tags"></div>
+      </div>
+    </div>
+  </div>
+  <button class="ex-use-btn" id="ex-use-btn">Use this exercise</button>
+</div>
