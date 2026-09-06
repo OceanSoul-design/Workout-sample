@@ -1,7 +1,6 @@
 const SHEET_NAME = 'Data';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 300;
-const EXERCISE_LIST_CACHE_SECONDS = 21600; // 6 hours
 
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -38,58 +37,6 @@ function checkAuth_(token) {
   resetAttempts_();
   return { ok: true };
 }
-function getExerciseData_(name) {
-  const key = PropertiesService.getScriptProperties().getProperty('RAPIDAPI_KEY');
-  const url = 'https://exercisedb.p.rapidapi.com/exercises/name/'
-              + encodeURIComponent(name.toLowerCase()) + '?limit=1';
-  const response = UrlFetchApp.fetch(url, {
-    headers: {
-      'X-RapidAPI-Key': key,
-      'X-RapidAPI-Host': 'exercisedb.p.rapidapi.com'
-    }
-  });
-  return JSON.parse(response.getContentText());
-}
-
-// Returns just the exercise names for a single ExerciseDB bodyPart value
-// (e.g. "chest", "upper legs"), cached for a few hours so repeated tab
-// switches don't re-hit RapidAPI every time.
-function getExerciseNamesForBodyPart_(bodypart) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'bodypart_names_' + bodypart;
-  const cached = cache.get(cacheKey);
-  if (cached) return JSON.parse(cached);
-
-  const key = PropertiesService.getScriptProperties().getProperty('RAPIDAPI_KEY');
-  const url = 'https://exercisedb.p.rapidapi.com/exercises/bodyPart/'
-              + encodeURIComponent(bodypart) + '?limit=200';
-  const response = UrlFetchApp.fetch(url, {
-    headers: {
-      'X-RapidAPI-Key': key,
-      'X-RapidAPI-Host': 'exercisedb.p.rapidapi.com'
-    }
-  });
-  const data = JSON.parse(response.getContentText());
-  const names = Array.from(new Set(data.map(function (ex) { return ex.name; }))).sort();
-
-  cache.put(cacheKey, JSON.stringify(names), EXERCISE_LIST_CACHE_SECONDS);
-  return names;
-}
-
-// Accepts a comma-separated list of bodyPart values (e.g. "upper legs,lower legs")
-// and returns the merged, deduped, sorted list of exercise names across all of them.
-function getExerciseNamesForBodyParts_(bodypartsParam) {
-  const parts = (bodypartsParam || '')
-    .split(',')
-    .map(function (s) { return s.trim(); })
-    .filter(Boolean);
-
-  const all = [];
-  parts.forEach(function (bp) {
-    all.push.apply(all, getExerciseNamesForBodyPart_(bp));
-  });
-  return Array.from(new Set(all)).sort();
-}
 
 function doGet(e) {
   const auth = checkAuth_(e.parameter.token);
@@ -97,16 +44,6 @@ function doGet(e) {
 
   if (e.parameter.action === 'ping') {
     return jsonOut_({ ok: true });
-  }
-
-  if (e.parameter.action === 'exercise') {
-    const data = getExerciseData_(e.parameter.name);
-    return jsonOut_({ ok: true, exercise: data[0] || null });
-  }
-
-  if (e.parameter.action === 'exerciseList') {
-    const names = getExerciseNamesForBodyParts_(e.parameter.bodypart);
-    return jsonOut_({ ok: true, names: names });
   }
 
   const sheet = getSheet_();
