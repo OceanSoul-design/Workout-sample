@@ -2128,7 +2128,7 @@ document.getElementById('entries-list').addEventListener('click', async (e) => {
       await loadProgress();
       renderEntriesList();
     } else {
-      showToast('Update failed — try again', true);
+      showToast(res && res.message ? `Update failed: ${res.message}` : 'Update failed — try again', true);
     }
   }
 });
@@ -2415,7 +2415,7 @@ document.getElementById('custom-exercises-list').addEventListener('click', async
       await loadAllExerciseOptions();
       renderCustomExercisesList();
     } else {
-      showToast('Update failed — try again', true);
+      showToast(res && res.message ? `Update failed: ${res.message}` : 'Update failed — try again', true);
     }
   }
 });
