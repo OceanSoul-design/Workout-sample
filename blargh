@@ -261,14 +261,18 @@ function doPost(e) {
   const auth = checkAuth_(payload.token);
   if (!auth.ok) return jsonOut_(auth);
 
-  const op = payload.op || 'create';
-  if (op === 'update') return updateEntry_(payload);
-  if (op === 'delete') return deleteEntry_(payload);
-  if (op === 'addCustomExercise') return addCustomExercise_(payload);
-  if (op === 'updateCustomExercise') return updateCustomExercise_(payload);
-  if (op === 'deleteCustomExercise') return deleteCustomExercise_(payload);
-  if (op === 'addRoutineExercise') return addRoutineExercise_(payload);
-  if (op === 'deleteRoutineExercise') return deleteRoutineExercise_(payload);
-  if (op === 'deleteRoutine') return deleteRoutine_(payload);
-  return createEntry_(payload);
+  try {
+    const op = payload.op || 'create';
+    if (op === 'update') return updateEntry_(payload);
+    if (op === 'delete') return deleteEntry_(payload);
+    if (op === 'addCustomExercise') return addCustomExercise_(payload);
+    if (op === 'updateCustomExercise') return updateCustomExercise_(payload);
+    if (op === 'deleteCustomExercise') return deleteCustomExercise_(payload);
+    if (op === 'addRoutineExercise') return addRoutineExercise_(payload);
+    if (op === 'deleteRoutineExercise') return deleteRoutineExercise_(payload);
+    if (op === 'deleteRoutine') return deleteRoutine_(payload);
+    return createEntry_(payload);
+  } catch (err) {
+    return jsonOut_({ ok: false, error: 'exception', message: String(err) });
+  }
 }
