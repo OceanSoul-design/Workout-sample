@@ -195,7 +195,26 @@
   }
   .combo-option:last-child { border-bottom: none; }
   .combo-option:hover { background: var(--border); }
+  .combo-option.combo-add { color: var(--abs); font-weight: 600; }
   .combo-empty { padding: 12px 14px; font-size: 13px; color: var(--muted); }
+
+  /* Add custom exercise overlay */
+  #add-exercise-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 220;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #add-exercise-overlay.open { display: flex; }
+  .add-ex-body {
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
 
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
@@ -682,6 +701,37 @@
   <div id="entries-list"></div>
 </div>
 
+<!-- ADD CUSTOM EXERCISE OVERLAY -->
+<div id="add-exercise-overlay">
+  <div class="entries-overlay-header">
+    <h2>Add exercise</h2>
+    <button class="ex-close-btn" onclick="closeAddExerciseOverlay()">×</button>
+  </div>
+  <div class="add-ex-body">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="new-ex-name">
+    </div>
+    <div class="field">
+      <label>Muscle group</label>
+      <select id="new-ex-group"></select>
+    </div>
+    <div class="field">
+      <label>Image URL (optional)</label>
+      <input type="text" id="new-ex-image" placeholder="https://...">
+    </div>
+    <div class="field">
+      <label>Primary muscle (optional)</label>
+      <input type="text" id="new-ex-primary" placeholder="e.g. glutes">
+    </div>
+    <div class="field">
+      <label>Secondary muscles (optional, comma-separated)</label>
+      <input type="text" id="new-ex-secondary" placeholder="e.g. quadriceps, adductors">
+    </div>
+    <button class="submit-btn" id="new-ex-submit">Add exercise</button>
+  </div>
+</div>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <h2>Workout Log</h2>
@@ -829,13 +879,19 @@ function renderComboOptions(filterText) {
     ? currentExerciseNames.filter(n => n.toLowerCase().includes(filter))
     : currentExerciseNames;
 
+  let html = '';
   if (!matches.length) {
-    dropdown.innerHTML = '<div class="combo-empty">No matches</div>';
+    html += '<div class="combo-empty">No matches</div>';
   } else {
-    dropdown.innerHTML = matches.map(n =>
+    html += matches.map(n =>
       `<div class="combo-option" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`
     ).join('');
   }
+  if (filterText.trim()) {
+    html += `<div class="combo-option combo-add" data-add="${escapeHtml(filterText.trim())}">+ Add "${escapeHtml(filterText.trim())}" as a new exercise</div>`;
+  }
+
+  dropdown.innerHTML = html;
   dropdown.classList.add('open');
 }
 
@@ -848,6 +904,29 @@ function selectExercise(name) {
   document.getElementById('exercise-search').value = name;
   closeComboDropdown();
   exerciseInput.dispatchEvent(new Event('change'));
+}
+
+// User-added exercises not in the free-exercise-db dataset, stored in a
+// second sheet tab ("CustomExercises") and shared across both profiles.
+let customExercises = []; // {id, name, group, imageUrl, primaryMuscle, secondaryMuscles}
+let customExercisesLoadedOnce = false;
+
+async function loadCustomExercises(force) {
+  if (customExercisesLoadedOnce && !force) return;
+  try {
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken()) + '&action=customExercises';
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.ok && json.rows) {
+      customExercises = json.rows.slice(1).filter(r => r[1]).map(r => ({
+        id: r[0], name: r[1], group: r[2], imageUrl: r[3],
+        primaryMuscle: r[4], secondaryMuscles: r[5],
+      }));
+    }
+    customExercisesLoadedOnce = true;
+  } catch (e) {
+    // fail quietly — custom exercises just won't show up this session
+  }
 }
 
 async function loadExerciseOptions(group) {
@@ -863,16 +942,17 @@ async function loadExerciseOptions(group) {
 
   try {
     await loadExerciseDb();
+    await loadCustomExercises();
     const muscles = MUSCLE_MAP[group] || [];
-    currentExerciseNames = Array.from(new Set(
-      exerciseDb
-        .filter(ex => {
-          const primary = ex.primaryMuscles || [];
-          const secondary = ex.secondaryMuscles || [];
-          return primary.some(m => muscles.includes(m)) || secondary.some(m => muscles.includes(m));
-        })
-        .map(ex => ex.name)
-    )).sort();
+    const datasetNames = exerciseDb
+      .filter(ex => {
+        const primary = ex.primaryMuscles || [];
+        const secondary = ex.secondaryMuscles || [];
+        return primary.some(m => muscles.includes(m)) || secondary.some(m => muscles.includes(m));
+      })
+      .map(ex => ex.name);
+    const customNames = customExercises.filter(c => c.group === group).map(c => c.name);
+    currentExerciseNames = Array.from(new Set([...datasetNames, ...customNames])).sort();
     searchInput.placeholder = currentExerciseNames.length
       ? 'Search exercises...'
       : 'No exercises found';
@@ -985,6 +1065,12 @@ exerciseSearch.addEventListener('keydown', (e) => {
 });
 document.getElementById('exercise-dropdown').addEventListener('mousedown', (e) => {
   // mousedown (not click) so this fires before the search input's blur handler
+  const addOpt = e.target.closest('.combo-add');
+  if (addOpt) {
+    e.preventDefault();
+    openAddExerciseOverlay(addOpt.dataset.add);
+    return;
+  }
   const opt = e.target.closest('.combo-option');
   if (opt) {
     e.preventDefault();
@@ -1306,6 +1392,28 @@ async function openExOverlay(name, group) {
   badge.style.background = GROUP_COLORS[group] || '#6b7280';
   document.getElementById('ex-overlay').classList.add('open');
 
+  await loadCustomExercises();
+  const custom = customExercises.find(c => c.name === name);
+  if (custom) {
+    const gifWrap = document.getElementById('ex-gif');
+    gifWrap.style.position = '';
+    if (custom.imageUrl) {
+      gifWrap.innerHTML = `<img src="${escapeHtml(custom.imageUrl)}" alt="${escapeHtml(name)}">`;
+    } else {
+      gifWrap.innerHTML = '<div class="ex-gif-loading">No image found</div>';
+    }
+    if (custom.primaryMuscle) {
+      document.getElementById('ex-primary-tags').innerHTML =
+        `<span class="ex-muscle-tag primary">${escapeHtml(custom.primaryMuscle)}</span>`;
+    }
+    const secondaryList = (custom.secondaryMuscles || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    document.getElementById('ex-secondary-tags').innerHTML = secondaryList.length
+      ? secondaryList.map(m => `<span class="ex-muscle-tag secondary">${escapeHtml(m)}</span>`).join('')
+      : '<span style="color:var(--muted);font-size:13px">None listed</span>';
+    return; // don't fall through to the dataset lookup below
+  }
+
   try {
     await loadExerciseDb();
     const ex = exerciseDb.find(e => e.name === name);
@@ -1499,6 +1607,68 @@ document.getElementById('entries-list').addEventListener('click', async (e) => {
     }
   }
 });
+
+// ---- Add custom exercise overlay ----
+function populateNewExerciseGroupSelect() {
+  const sel = document.getElementById('new-ex-group');
+  sel.innerHTML = GROUP_NAMES.map(g => `<option value="${g}">${g}</option>`).join('');
+}
+populateNewExerciseGroupSelect();
+
+function openAddExerciseOverlay(prefillName) {
+  document.getElementById('new-ex-name').value = prefillName || '';
+  document.getElementById('new-ex-group').value = currentGroup;
+  document.getElementById('new-ex-image').value = '';
+  document.getElementById('new-ex-primary').value = '';
+  document.getElementById('new-ex-secondary').value = '';
+  document.getElementById('add-exercise-overlay').classList.add('open');
+}
+function closeAddExerciseOverlay() {
+  document.getElementById('add-exercise-overlay').classList.remove('open');
+}
+
+document.getElementById('new-ex-submit').onclick = async () => {
+  const name = document.getElementById('new-ex-name').value.trim();
+  if (!name) { showToast('Enter a name', true); return; }
+  const group = document.getElementById('new-ex-group').value;
+  const imageUrl = document.getElementById('new-ex-image').value.trim();
+  const primaryMuscle = document.getElementById('new-ex-primary').value.trim();
+  const secondaryMuscles = document.getElementById('new-ex-secondary').value.trim();
+
+  const btn = document.getElementById('new-ex-submit');
+  btn.disabled = true;
+  btn.textContent = 'Adding...';
+
+  const now = new Date();
+  const res = await sendEntryOp({
+    op: 'addCustomExercise',
+    token: getToken(),
+    id: generateId(),
+    name, group, imageUrl, primaryMuscle, secondaryMuscles,
+    user: getCurrentProfile(),
+    date: now.toLocaleDateString('en-US'),
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Add exercise';
+
+  if (res && res.ok) {
+    closeAddExerciseOverlay();
+    customExercises.push({ id: '', name, group, imageUrl, primaryMuscle, secondaryMuscles });
+    if (group === currentGroup) {
+      if (!currentExerciseNames.includes(name)) {
+        currentExerciseNames.push(name);
+        currentExerciseNames.sort();
+      }
+      selectExercise(name);
+      showToast('✓ Exercise added');
+    } else {
+      showToast(`✓ Added to ${group} — switch tabs to use it`);
+    }
+  } else {
+    showToast('Could not add exercise — try again', true);
+  }
+};
 </script>
 
 <script>
