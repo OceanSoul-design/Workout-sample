@@ -160,8 +160,8 @@
   .profile-tab.active { background: var(--text); color: var(--bg); border-color: transparent; }
 
   /* Exercise input */
-  .exercise-input-wrap { margin-bottom: 24px; }
-  .exercise-input-wrap select {
+  .exercise-input-wrap { margin-bottom: 24px; position: relative; }
+  .exercise-input-wrap input[type="text"] {
     width: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -170,14 +170,32 @@
     font-size: 16px;
     padding: 14px;
     -webkit-appearance: none;
-    appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
-    background-repeat: no-repeat;
-    background-position: right 14px center;
-    background-size: 20px;
   }
-  .exercise-input-wrap select:focus { outline: none; border-color: #4a4d5a; }
-  .exercise-input-wrap select:disabled { opacity: .6; }
+  .exercise-input-wrap input[type="text"]:focus { outline: none; border-color: #4a4d5a; }
+  .exercise-input-wrap input[type="text"]:disabled { opacity: .6; }
+  .combo-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    z-index: 50;
+  }
+  .combo-dropdown.open { display: block; }
+  .combo-option {
+    padding: 12px 14px;
+    font-size: 15px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .combo-option:last-child { border-bottom: none; }
+  .combo-option:hover { background: var(--border); }
+  .combo-empty { padding: 12px 14px; font-size: 13px; color: var(--muted); }
 
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
@@ -469,9 +487,9 @@
   <div class="group-tabs" id="group-tabs"></div>
 
   <div class="exercise-input-wrap">
-    <select id="exercise-input">
-      <option value="">Loading exercises...</option>
-    </select>
+    <input type="text" id="exercise-search" placeholder="Loading exercises..." autocomplete="off" disabled>
+    <input type="hidden" id="exercise-input">
+    <div class="combo-dropdown" id="exercise-dropdown"></div>
   </div>
 
   <button id="ex-info-btn">👁 Preview exercise</button>
@@ -679,28 +697,52 @@ function loadExerciseDb() {
   return exerciseDbPromise;
 }
 
-function populateExerciseSelect(names) {
-  const select = document.getElementById('exercise-input');
-  if (!names.length) {
-    select.innerHTML = '<option value="">No exercises found</option>';
-    return;
+// Names for the currently-loaded muscle group, filtered live as you type.
+let currentExerciseNames = [];
+
+function renderComboOptions(filterText) {
+  const dropdown = document.getElementById('exercise-dropdown');
+  const filter = filterText.trim().toLowerCase();
+  const matches = filter
+    ? currentExerciseNames.filter(n => n.toLowerCase().includes(filter))
+    : currentExerciseNames;
+
+  if (!matches.length) {
+    dropdown.innerHTML = '<div class="combo-empty">No matches</div>';
+  } else {
+    dropdown.innerHTML = matches.map(n =>
+      `<div class="combo-option" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`
+    ).join('');
   }
-  select.innerHTML = '<option value="">Choose an exercise...</option>' +
-    names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  dropdown.classList.add('open');
+}
+
+function closeComboDropdown() {
+  document.getElementById('exercise-dropdown').classList.remove('open');
+}
+
+function selectExercise(name) {
+  exerciseInput.value = name;
+  document.getElementById('exercise-search').value = name;
+  closeComboDropdown();
+  exerciseInput.dispatchEvent(new Event('change'));
 }
 
 async function loadExerciseOptions(group) {
-  const select = document.getElementById('exercise-input');
-  select.disabled = true;
+  const searchInput = document.getElementById('exercise-search');
+  searchInput.disabled = true;
+  searchInput.value = '';
+  searchInput.placeholder = 'Loading exercises...';
+  exerciseInput.value = '';
+  closeComboDropdown();
   document.getElementById('submit-btn').disabled = true;
   document.getElementById('ex-info-btn').style.display = 'none';
   updateSubmitLabel();
-  select.innerHTML = '<option value="">Loading exercises...</option>';
 
   try {
     await loadExerciseDb();
     const muscles = MUSCLE_MAP[group] || [];
-    const names = Array.from(new Set(
+    currentExerciseNames = Array.from(new Set(
       exerciseDb
         .filter(ex => {
           const primary = ex.primaryMuscles || [];
@@ -709,11 +751,14 @@ async function loadExerciseOptions(group) {
         })
         .map(ex => ex.name)
     )).sort();
-    populateExerciseSelect(names);
+    searchInput.placeholder = currentExerciseNames.length
+      ? 'Search exercises...'
+      : 'No exercises found';
   } catch (e) {
-    select.innerHTML = '<option value="">Couldn\'t load exercises</option>';
+    currentExerciseNames = [];
+    searchInput.placeholder = "Couldn't load exercises";
   }
-  select.disabled = false;
+  searchInput.disabled = false;
 }
 
 // ---- Date subtitle ----
@@ -798,6 +843,40 @@ exerciseInput.addEventListener('change', () => {
   document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
   updateSubmitLabel();
   if (val) document.getElementById('sets').focus();
+});
+
+const exerciseSearch = document.getElementById('exercise-search');
+exerciseSearch.addEventListener('input', () => {
+  renderComboOptions(exerciseSearch.value);
+});
+exerciseSearch.addEventListener('focus', () => {
+  if (!exerciseSearch.disabled) renderComboOptions(exerciseSearch.value);
+});
+exerciseSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const first = document.querySelector('#exercise-dropdown .combo-option');
+    if (first) selectExercise(first.dataset.name);
+  } else if (e.key === 'Escape') {
+    closeComboDropdown();
+  }
+});
+document.getElementById('exercise-dropdown').addEventListener('mousedown', (e) => {
+  // mousedown (not click) so this fires before the search input's blur handler
+  const opt = e.target.closest('.combo-option');
+  if (opt) {
+    e.preventDefault();
+    selectExercise(opt.dataset.name);
+  }
+});
+exerciseSearch.addEventListener('blur', () => {
+  setTimeout(() => {
+    closeComboDropdown();
+    // keep the visible text in sync with whatever's actually selected
+    if (exerciseSearch.value !== exerciseInput.value) {
+      exerciseSearch.value = exerciseInput.value || '';
+    }
+  }, 100);
 });
 
 document.getElementById('sets').addEventListener('keydown', (e) => {
@@ -1166,14 +1245,8 @@ function closeExOverlay() {
 }
 
 document.getElementById('ex-use-btn').onclick = () => {
-  const hasOption = Array.from(exerciseInput.options).some(o => o.value === overlayExerciseName);
-  if (!hasOption) {
-    const opt = document.createElement('option');
-    opt.value = overlayExerciseName;
-    opt.textContent = overlayExerciseName;
-    exerciseInput.insertBefore(opt, exerciseInput.firstChild.nextSibling || null);
-  }
   exerciseInput.value = overlayExerciseName;
+  document.getElementById('exercise-search').value = overlayExerciseName;
   exerciseInput.dispatchEvent(new Event('change'));
   closeExOverlay();
   document.getElementById('sets').focus();
