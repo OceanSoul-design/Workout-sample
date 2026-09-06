@@ -357,6 +357,86 @@
 
   .loading { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
 
+  .card-header-right { display: flex; align-items: center; gap: 6px; }
+  .card-edit-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  /* Entries edit overlay */
+  #entries-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 210;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #entries-overlay.open { display: flex; }
+  .entries-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .entries-overlay-header h2 { font-size: 18px; font-weight: 700; }
+  .entry-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin: 12px 16px;
+  }
+  .entry-row-header {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .entry-summary { font-size: 14px; }
+  .entry-edit-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .entry-edit-fields input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 8px;
+    width: 100%;
+  }
+  .entry-actions { display: flex; gap: 8px; }
+  .entry-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .entry-btn.save { background: var(--success); color: #fff; }
+  .entry-btn.delete { background: var(--error); color: #fff; }
+  .entry-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .entries-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
   /* Exercise detail overlay */
   #ex-overlay {
     position: fixed;
@@ -592,6 +672,16 @@
   <button class="ex-use-btn" id="ex-use-btn">Use this exercise</button>
 </div>
 
+<!-- ENTRIES EDIT OVERLAY -->
+<div id="entries-overlay">
+  <div class="entries-overlay-header">
+    <h2 id="entries-overlay-name">Exercise</h2>
+    <button class="ex-close-btn" onclick="closeEntriesOverlay()">×</button>
+  </div>
+  <p class="subtitle" style="padding:12px 16px 0;">Entries from the last few days can be edited or deleted.</p>
+  <div id="entries-list"></div>
+</div>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <h2>Workout Log</h2>
@@ -669,6 +759,38 @@ function escapeHtml(str) {
 
 let currentGroup = 'Abs';
 let knownExercisesByGroup = {};
+let allLogRows = []; // raw sheet rows (no header), cached for the entries-edit overlay
+
+// Entries older than this many days show as locked (read-only) in the edit list.
+const ENTRY_EDIT_WINDOW_DAYS = 5;
+function withinEditWindow(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return false;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - ENTRY_EDIT_WINDOW_DAYS);
+  return d >= cutoff;
+}
+
+function generateId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+async function sendEntryOp(payload) {
+  try {
+    // No explicit Content-Type header and no mode:'no-cors' — Apps Script
+    // reads e.postData.contents as raw text either way, and omitting the
+    // header keeps this a "simple request" so we can actually read the
+    // JSON response back (unlike the old no-cors POST).
+    const res = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (e) {
+    return { ok: false };
+  }
+}
 
 // free-exercise-db: public-domain dataset, no API key, no rate limits.
 // https://github.com/yuhonas/free-exercise-db
@@ -919,6 +1041,8 @@ document.getElementById('submit-btn').onclick = async () => {
 
   const now = new Date();
   const payload = {
+    op: 'create',
+    id: generateId(),
     token: getToken(),
     user: getCurrentProfile(),
     date: now.toLocaleDateString('en-US'),
@@ -933,23 +1057,15 @@ document.getElementById('submit-btn').onclick = async () => {
     howlong: document.getElementById('howlong').value || '',
   };
 
-  try {
-    // NOTE: mode:'no-cors' means we can't read the response body/status here.
-    // If the token were ever wrong, this would silently fail to save — the
-    // gate that matters is the PIN check at unlock time (see pin script below).
-    await fetch(SCRIPT_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
+  const res = await sendEntryOp(payload);
+  if (res && res.ok) {
     showToast('✓ Logged');
     // Clear numeric fields but keep the selected exercise so repeat
     // sets are fast (dropdown selection stays as-is).
     ['sets','reps','weight','energy','bodyweight','howlong'].forEach(id => {
       document.getElementById(id).value = '';
     });
-  } catch(e) {
+  } else {
     showToast('Connection error — try again', true);
   }
 
@@ -997,6 +1113,7 @@ async function loadProgress() {
     // cols: 0=Date, 1=Time, 2=Type, 3=Reps, 4=Sets, 5=Weight, 6=Energy,
     //       7=Body Weight, 8=How Long, 9=Volume, 10=User, 11=Group
     indexHistory(rows); // keep Log page's autocomplete fresh too
+    allLogRows = rows.slice(1); // cache raw rows (no header) for the entries-edit overlay
     const activeProfile = getCurrentProfile();
     const data = rows.slice(1).filter(r => r[2] && r[10] === activeProfile);
 
@@ -1066,7 +1183,10 @@ async function loadProgress() {
         <div class="exercise-card" data-exercise="${escapeHtml(ex)}" data-group="${escapeHtml(grp)}">
           <div class="card-header">
             <span class="card-name">${escapeHtml(ex)}</span>
-            <span class="card-group" style="background:${GROUP_COLORS[grp]}">${grp}</span>
+            <div class="card-header-right">
+              <span class="card-group" style="background:${GROUP_COLORS[grp]}">${grp}</span>
+              <button class="card-edit-btn" data-exercise="${escapeHtml(ex)}">✎ Entries</button>
+            </div>
           </div>
           <div class="card-stats">
             <div class="stat">
@@ -1104,6 +1224,14 @@ async function loadProgress() {
     // Tap a card to preview the exercise (gif + muscle info)
     document.querySelectorAll('.exercise-card').forEach(card => {
       card.onclick = () => openExOverlay(card.dataset.exercise, card.dataset.group);
+    });
+
+    // Tap the edit button to browse/edit/delete recent entries for that exercise
+    document.querySelectorAll('.card-edit-btn').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        openEntriesOverlay(btn.dataset.exercise);
+      };
     });
 
   } catch(e) {
@@ -1251,6 +1379,126 @@ document.getElementById('ex-use-btn').onclick = () => {
   closeExOverlay();
   document.getElementById('sets').focus();
 };
+
+// ---- Entries edit overlay ----
+let entriesOverlayExercise = '';
+
+function openEntriesOverlay(exerciseName) {
+  entriesOverlayExercise = exerciseName;
+  document.getElementById('entries-overlay-name').textContent = exerciseName;
+  document.getElementById('entries-overlay').classList.add('open');
+  renderEntriesList();
+}
+
+function closeEntriesOverlay() {
+  document.getElementById('entries-overlay').classList.remove('open');
+}
+
+function renderEntriesList() {
+  const activeProfile = getCurrentProfile();
+  const rows = allLogRows.filter(r => r[2] === entriesOverlayExercise && r[10] === activeProfile);
+  const container = document.getElementById('entries-list');
+
+  if (!rows.length) {
+    container.innerHTML = '<div class="entries-empty">No entries found.</div>';
+    return;
+  }
+
+  // Most recent first
+  const sorted = rows.slice().reverse();
+
+  container.innerHTML = sorted.map(r => {
+    const id = r[12] || '';
+    const editable = !!id && withinEditWindow(r[0]);
+    const summary = `${escapeHtml(r[4] || '—')} sets × ${escapeHtml(r[3] || '—')} reps @ ${escapeHtml(r[5] || '—')} lb`;
+
+    if (!editable) {
+      return `
+        <div class="entry-row">
+          <div class="entry-row-header">
+            <span>${escapeHtml(r[0])} ${escapeHtml(r[1] || '')}</span>
+            <span>Locked</span>
+          </div>
+          <div class="entry-summary">${summary}</div>
+        </div>`;
+    }
+
+    return `
+      <div class="entry-row" data-id="${escapeHtml(id)}">
+        <div class="entry-row-header">
+          <span>${escapeHtml(r[0])} ${escapeHtml(r[1] || '')}</span>
+        </div>
+        <div class="entry-edit-fields">
+          <input type="number" class="entry-sets" placeholder="Sets" value="${escapeHtml(r[4])}">
+          <input type="number" class="entry-reps" placeholder="Reps" value="${escapeHtml(r[3])}">
+          <input type="number" class="entry-weight" placeholder="Weight" value="${escapeHtml(r[5])}">
+        </div>
+        <div class="entry-actions">
+          <button class="entry-btn save" data-action="save">Save</button>
+          <button class="entry-btn delete" data-action="delete">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('entries-list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.entry-btn');
+  if (!btn) return;
+  const rowEl = btn.closest('.entry-row');
+  const id = rowEl.dataset.id;
+  const original = allLogRows.find(r => r[12] === id);
+  if (!original) {
+    showToast("Couldn't find that entry", true);
+    return;
+  }
+
+  if (btn.dataset.action === 'delete') {
+    if (!confirm('Delete this entry? This can\'t be undone.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+    const res = await sendEntryOp({ op: 'delete', token: getToken(), id });
+    if (res && res.ok) {
+      showToast('Entry deleted');
+      await loadProgress();
+      renderEntriesList();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Delete';
+      showToast('Delete failed — try again', true);
+    }
+  }
+
+  if (btn.dataset.action === 'save') {
+    const sets = rowEl.querySelector('.entry-sets').value;
+    const reps = rowEl.querySelector('.entry-reps').value;
+    const weight = rowEl.querySelector('.entry-weight').value;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    const res = await sendEntryOp({
+      op: 'update',
+      token: getToken(),
+      id,
+      date: original[0],
+      time: original[1],
+      exercise: original[2],
+      reps, sets, weight,
+      energy: original[6],
+      bodyweight: original[7],
+      howlong: original[8],
+      user: original[10],
+      group: original[11],
+    });
+    btn.disabled = false;
+    btn.textContent = 'Save';
+    if (res && res.ok) {
+      showToast('Entry updated');
+      await loadProgress();
+      renderEntriesList();
+    } else {
+      showToast('Update failed — try again', true);
+    }
+  }
+});
 </script>
 
 <script>
