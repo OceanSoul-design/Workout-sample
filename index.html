@@ -206,6 +206,20 @@
   .optional-fields { display: none; }
   .optional-fields.open { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 
+  /* Preview exercise button */
+  #ex-info-btn {
+    margin-top: 8px;
+    width: 100%;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+    display: none;
+  }
+
   /* Submit */
   .submit-btn {
     width: 100%;
@@ -218,6 +232,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: opacity .15s;
+    margin-top: 16px;
   }
   .submit-btn:disabled { opacity: .4; cursor: not-allowed; }
 
@@ -264,6 +279,7 @@
     border-radius: var(--radius);
     padding: 16px;
     margin-bottom: 12px;
+    cursor: pointer;
   }
   .card-header {
     display: flex;
@@ -316,6 +332,123 @@
   }
 
   .loading { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
+
+  /* Exercise detail overlay */
+  #ex-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 200;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #ex-overlay.open { display: flex; }
+
+  .ex-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ex-overlay-header h2 { font-size: 18px; font-weight: 700; }
+  .ex-close-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 28px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+  }
+
+  .ex-body {
+    display: flex;
+    gap: 16px;
+    padding: 20px 16px;
+    flex: 1;
+  }
+  .ex-gif {
+    width: 48%;
+    flex-shrink: 0;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+  }
+  .ex-gif img {
+    width: 100%;
+    border-radius: var(--radius);
+  }
+  .ex-gif .ex-gif-loading {
+    color: var(--muted);
+    font-size: 13px;
+    padding: 24px;
+    text-align: center;
+  }
+  .ex-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .ex-group-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .ex-muscle-section h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .ex-muscle-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .ex-muscle-tag {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .ex-muscle-tag.primary {
+    background: var(--surface);
+    border: 1px solid var(--text);
+    color: var(--text);
+  }
+  .ex-muscle-tag.secondary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .ex-use-btn {
+    margin: 0 16px 24px;
+    width: calc(100% - 32px);
+    padding: 16px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  @media (max-width: 360px) {
+    .ex-body { flex-direction: column; }
+    .ex-gif { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -333,6 +466,8 @@
     <input type="text" id="exercise-input" list="exercise-suggestions" placeholder="Type an exercise..." autocomplete="off">
     <datalist id="exercise-suggestions"></datalist>
   </div>
+
+  <button id="ex-info-btn">👁 Preview exercise</button>
 
   <div class="fields">
     <div class="field-row">
@@ -406,6 +541,58 @@
 </nav>
 
 <div class="toast" id="toast"></div>
+
+<!-- EXERCISE DETAIL OVERLAY -->
+<div id="ex-overlay">
+  <div class="ex-overlay-header">
+    <h2 id="ex-overlay-name">Exercise</h2>
+    <button class="ex-close-btn" onclick="closeExOverlay()">×</button>
+  </div>
+  <div class="ex-body">
+    <div class="ex-gif" id="ex-gif">
+      <div class="ex-gif-loading">Loading...</div>
+    </div>
+    <div class="ex-info">
+      <span class="ex-group-badge" id="ex-group-badge"></span>
+      <div class="ex-muscle-section">
+        <h4>Primary muscle</h4>
+        <div class="ex-muscle-tags" id="ex-primary-tags"></div>
+      </div>
+      <div class="ex-muscle-section">
+        <h4>Secondary muscles</h4>
+        <div class="ex-muscle-tags" id="ex-secondary-tags"></div>
+      </div>
+    </div>
+  </div>
+  <button class="ex-use-btn" id="ex-use-btn">Use this exercise</button>
+</div>
+
+<!-- PIN SCREEN -->
+<div id="pin-screen">
+  <h2>Workout Log</h2>
+  <p>Enter PIN to continue</p>
+  <p id="pin-status"></p>
+  <div class="pin-dots">
+    <div class="pin-dot" id="dot-0"></div>
+    <div class="pin-dot" id="dot-1"></div>
+    <div class="pin-dot" id="dot-2"></div>
+    <div class="pin-dot" id="dot-3"></div>
+  </div>
+  <div class="pin-pad">
+    <button class="pin-btn" onclick="pinPress('1')">1</button>
+    <button class="pin-btn" onclick="pinPress('2')">2</button>
+    <button class="pin-btn" onclick="pinPress('3')">3</button>
+    <button class="pin-btn" onclick="pinPress('4')">4</button>
+    <button class="pin-btn" onclick="pinPress('5')">5</button>
+    <button class="pin-btn" onclick="pinPress('6')">6</button>
+    <button class="pin-btn" onclick="pinPress('7')">7</button>
+    <button class="pin-btn" onclick="pinPress('8')">8</button>
+    <button class="pin-btn" onclick="pinPress('9')">9</button>
+    <button class="pin-btn empty"></button>
+    <button class="pin-btn" onclick="pinPress('0')">0</button>
+    <button class="pin-btn del" onclick="pinDelete()">⌫</button>
+  </div>
+</div>
 
 <script>
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxG3WY_1gDM6bPh1HMdCikROeb8Z9qeTXW5RLBrnyhBzpRKGKMg3bvPZHxkyx3yBkSq/exec';
@@ -548,6 +735,7 @@ const exerciseInput = document.getElementById('exercise-input');
 exerciseInput.addEventListener('input', () => {
   const val = exerciseInput.value.trim();
   document.getElementById('submit-btn').disabled = !val;
+  document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
   updateSubmitLabel();
 });
 exerciseInput.addEventListener('keydown', (e) => {
@@ -575,6 +763,11 @@ document.getElementById('weight').addEventListener('keydown', (e) => {
 document.getElementById('optional-toggle').onclick = function() {
   this.classList.toggle('open');
   document.getElementById('optional-fields').classList.toggle('open');
+};
+
+// ---- Preview exercise button ----
+document.getElementById('ex-info-btn').onclick = () => {
+  openExOverlay(exerciseInput.value.trim(), currentGroup);
 };
 
 // ---- Submit ----
@@ -711,12 +904,12 @@ async function loadProgress() {
       const sessions = byEx[ex].sessions;
       const grp = byEx[ex].group;
       const last6 = sessions.slice(-6);
-      const prev3 = sessions.slice(-6, -3);
-      const recent3 = sessions.slice(-3);
 
       const maxWeight = Math.max(...sessions.map(s => s.weight));
       const lastWeight = sessions[sessions.length-1]?.weight || 0;
-      const lastVolume = sessions[sessions.length-1]?.volume || 0;
+
+      const prev3 = sessions.slice(-6, -3);
+      const recent3 = sessions.slice(-3);
 
       const avgVolRecent = recent3.length ? recent3.reduce((a,s) => a + s.volume, 0) / recent3.length : 0;
       const avgVolPrev = prev3.length ? prev3.reduce((a,s) => a + s.volume, 0) / prev3.length : 0;
@@ -736,11 +929,10 @@ async function loadProgress() {
         indicator = '<span class="indicator neutral">Keep logging to see trends</span>';
       }
 
-      const volumes = last6.map(s => s.volume);
       const canvasId = 'chart-' + ex.replace(/\s+/g, '-');
 
       html += `
-        <div class="exercise-card">
+        <div class="exercise-card" data-exercise="${escapeHtml(ex)}" data-group="${escapeHtml(grp)}">
           <div class="card-header">
             <span class="card-name">${escapeHtml(ex)}</span>
             <span class="card-group" style="background:${GROUP_COLORS[grp]}">${grp}</span>
@@ -776,6 +968,11 @@ async function loadProgress() {
       const canvasId = 'chart-' + ex.replace(/\s+/g, '-');
       const grp = byEx[ex].group;
       drawSparkline(canvasId, volumes, GROUP_COLORS[grp]);
+    });
+
+    // Tap a card to preview the exercise (gif + muscle info)
+    document.querySelectorAll('.exercise-card').forEach(card => {
+      card.onclick = () => openExOverlay(card.dataset.exercise, card.dataset.group);
     });
 
   } catch(e) {
@@ -832,33 +1029,69 @@ function drawSparkline(canvasId, values, color) {
 }
 
 document.getElementById('refresh-btn').onclick = loadProgress;
+
+// ---- Exercise detail overlay ----
+let overlayExerciseName = '';
+
+async function openExOverlay(name, group) {
+  if (!name) return;
+  overlayExerciseName = name;
+  document.getElementById('ex-overlay-name').textContent = name;
+  document.getElementById('ex-gif').innerHTML = '<div class="ex-gif-loading">Loading...</div>';
+  document.getElementById('ex-primary-tags').innerHTML = '';
+  document.getElementById('ex-secondary-tags').innerHTML = '';
+  const badge = document.getElementById('ex-group-badge');
+  badge.textContent = group;
+  badge.style.background = GROUP_COLORS[group] || '#6b7280';
+  document.getElementById('ex-overlay').classList.add('open');
+
+  try {
+    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
+              + '&action=exercise&name=' + encodeURIComponent(name);
+    const res = await fetch(url);
+    const json = await res.json();
+    const ex = json.exercise;
+
+    if (ex && ex.gifUrl) {
+      document.getElementById('ex-gif').innerHTML =
+        `<img src="${ex.gifUrl}" alt="${escapeHtml(name)}">`;
+    } else {
+      document.getElementById('ex-gif').innerHTML =
+        '<div class="ex-gif-loading">No image found</div>';
+    }
+
+    if (ex && ex.target) {
+      document.getElementById('ex-primary-tags').innerHTML =
+        `<span class="ex-muscle-tag primary">${escapeHtml(ex.target)}</span>`;
+    }
+
+    if (ex && ex.secondaryMuscles && ex.secondaryMuscles.length) {
+      document.getElementById('ex-secondary-tags').innerHTML =
+        ex.secondaryMuscles.map(m =>
+          `<span class="ex-muscle-tag secondary">${escapeHtml(m)}</span>`
+        ).join('');
+    } else {
+      document.getElementById('ex-secondary-tags').innerHTML =
+        '<span style="color:var(--muted);font-size:13px">None listed</span>';
+    }
+
+  } catch(e) {
+    document.getElementById('ex-gif').innerHTML =
+      '<div class="ex-gif-loading">Couldn\'t load</div>';
+  }
+}
+
+function closeExOverlay() {
+  document.getElementById('ex-overlay').classList.remove('open');
+}
+
+document.getElementById('ex-use-btn').onclick = () => {
+  exerciseInput.value = overlayExerciseName;
+  exerciseInput.dispatchEvent(new Event('input'));
+  closeExOverlay();
+  document.getElementById('sets').focus();
+};
 </script>
-<!-- PIN SCREEN -->
-<div id="pin-screen">
-  <h2>Workout Log</h2>
-  <p>Enter PIN to continue</p>
-  <p id="pin-status"></p>
-  <div class="pin-dots">
-    <div class="pin-dot" id="dot-0"></div>
-    <div class="pin-dot" id="dot-1"></div>
-    <div class="pin-dot" id="dot-2"></div>
-    <div class="pin-dot" id="dot-3"></div>
-  </div>
-  <div class="pin-pad">
-    <button class="pin-btn" onclick="pinPress('1')">1</button>
-    <button class="pin-btn" onclick="pinPress('2')">2</button>
-    <button class="pin-btn" onclick="pinPress('3')">3</button>
-    <button class="pin-btn" onclick="pinPress('4')">4</button>
-    <button class="pin-btn" onclick="pinPress('5')">5</button>
-    <button class="pin-btn" onclick="pinPress('6')">6</button>
-    <button class="pin-btn" onclick="pinPress('7')">7</button>
-    <button class="pin-btn" onclick="pinPress('8')">8</button>
-    <button class="pin-btn" onclick="pinPress('9')">9</button>
-    <button class="pin-btn empty"></button>
-    <button class="pin-btn" onclick="pinPress('0')">0</button>
-    <button class="pin-btn del" onclick="pinDelete()">⌫</button>
-  </div>
-</div>
 
 <script>
 // The correct PIN is NOT stored here anymore — it lives only in the
@@ -936,213 +1169,3 @@ async function checkPin() {
 
 </body>
 </html>
-/* Exercise detail overlay */
-#ex-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  z-index: 200;
-  display: none;
-  flex-direction: column;
-  overflow-y: auto;
-}
-#ex-overlay.open { display: flex; }
-
-.ex-overlay-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 16px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.ex-overlay-header h2 { font-size: 18px; font-weight: 700; }
-.ex-close-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 28px;
-  cursor: pointer;
-  line-height: 1;
-  padding: 4px;
-}
-
-.ex-body {
-  display: flex;
-  gap: 16px;
-  padding: 20px 16px;
-  flex: 1;
-}
-.ex-gif {
-  width: 48%;
-  flex-shrink: 0;
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-.ex-gif img {
-  width: 100%;
-  border-radius: var(--radius);
-}
-.ex-gif .ex-gif-loading {
-  color: var(--muted);
-  font-size: 13px;
-  padding: 24px;
-  text-align: center;
-}
-.ex-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.ex-group-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fff;
-}
-.ex-muscle-section h4 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
-.ex-muscle-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ex-muscle-tag {
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 500;
-}
-.ex-muscle-tag.primary {
-  background: var(--surface);
-  border: 1px solid var(--text);
-  color: var(--text);
-}
-.ex-muscle-tag.secondary {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-.ex-use-btn {
-  margin: 0 16px 24px;
-  width: calc(100% - 32px);
-  padding: 16px;
-  border-radius: var(--radius);
-  border: none;
-  background: var(--text);
-  color: var(--bg);
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-@media (max-width: 360px) {
-  .ex-body { flex-direction: column; }
-  .ex-gif { width: 100%; }
-}<!-- EXERCISE DETAIL OVERLAY -->
-<div id="ex-overlay">
-  <div class="ex-overlay-header">
-    <h2 id="ex-overlay-name">Exercise</h2>
-    <button class="ex-close-btn" onclick="closeExOverlay()">×</button>
-  </div>
-  <div class="ex-body">
-    <div class="ex-gif" id="ex-gif">
-      <div class="ex-gif-loading">Loading...</div>
-    </div>
-    <div class="ex-info">
-      <span class="ex-group-badge" id="ex-group-badge"></span>
-      <div class="ex-muscle-section">
-        <h4>Primary muscle</h4>
-        <div class="ex-muscle-tags" id="ex-primary-tags"></div>
-      </div>
-      <div class="ex-muscle-section">
-        <h4>Secondary muscles</h4>
-        <div class="ex-muscle-tags" id="ex-secondary-tags"></div>
-      </div>
-    </div>
-  </div>
-  <button class="ex-use-btn" id="ex-use-btn">Use this exercise</button>
-</div>
-// ---- Exercise detail overlay ----
-let overlayExerciseName = '';
-
-async function openExOverlay(name, group) {
-  overlayExerciseName = name;
-  document.getElementById('ex-overlay-name').textContent = name;
-  document.getElementById('ex-gif').innerHTML = '<div class="ex-gif-loading">Loading...</div>';
-  document.getElementById('ex-primary-tags').innerHTML = '';
-  document.getElementById('ex-secondary-tags').innerHTML = '';
-  const badge = document.getElementById('ex-group-badge');
-  badge.textContent = group;
-  badge.style.background = GROUP_COLORS[group] || '#6b7280';
-  document.getElementById('ex-overlay').classList.add('open');
-
-  try {
-    const url = SCRIPT_URL + '?token=' + encodeURIComponent(getToken())
-              + '&action=exercise&name=' + encodeURIComponent(name);
-    const res = await fetch(url);
-    const json = await res.json();
-    const ex = json.exercise;
-
-    if (ex && ex.gifUrl) {
-      document.getElementById('ex-gif').innerHTML =
-        `<img src="${ex.gifUrl}" alt="${escapeHtml(name)}">`;
-    } else {
-      document.getElementById('ex-gif').innerHTML =
-        '<div class="ex-gif-loading">No image found</div>';
-    }
-
-    if (ex && ex.target) {
-      document.getElementById('ex-primary-tags').innerHTML =
-        `<span class="ex-muscle-tag primary">${escapeHtml(ex.target)}</span>`;
-    }
-
-    if (ex && ex.secondaryMuscles && ex.secondaryMuscles.length) {
-      document.getElementById('ex-secondary-tags').innerHTML =
-        ex.secondaryMuscles.map(m =>
-          `<span class="ex-muscle-tag secondary">${escapeHtml(m)}</span>`
-        ).join('');
-    } else {
-      document.getElementById('ex-secondary-tags').innerHTML =
-        '<span style="color:var(--muted);font-size:13px">None listed</span>';
-    }
-
-  } catch(e) {
-    document.getElementById('ex-gif').innerHTML =
-      '<div class="ex-gif-loading">Couldn\'t load</div>';
-  }
-}
-
-function closeExOverlay() {
-  document.getElementById('ex-overlay').classList.remove('open');
-}
-
-document.getElementById('ex-use-btn').onclick = () => {
-  exerciseInput.value = overlayExerciseName;
-  exerciseInput.dispatchEvent(new Event('input'));
-  closeExOverlay();
-  document.getElementById('sets').focus();
-};
-<button id="ex-info-btn" onclick="openExOverlay(exerciseInput.value.trim(), currentGroup)" 
-  style="margin-top:8px;width:100%;padding:10px;background:var(--surface);border:1px solid var(--border);
-  border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer;display:none;">
-  👁 Preview exercise
-</button>
-exerciseInput.addEventListener('input', () => {
-  const val = exerciseInput.value.trim();
-  document.getElementById('submit-btn').disabled = !val;
-  document.getElementById('ex-info-btn').style.display = val ? 'block' : 'none';
-  updateSubmitLabel();
-});
