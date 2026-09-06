@@ -261,6 +261,17 @@
   }
   #workout-recap-overlay.open, #calorie-history-overlay.open { display: flex; }
 
+  #body-weight-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 220;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #body-weight-overlay.open { display: flex; }
+
   /* Form fields */
   .fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -894,6 +905,25 @@
   <div id="calorie-history-list"></div>
 </div>
 
+<!-- BODY WEIGHT OVERLAY -->
+<div id="body-weight-overlay">
+  <div class="entries-overlay-header">
+    <h2>Update body weight</h2>
+    <button class="ex-close-btn" onclick="closeBodyWeightOverlay()">×</button>
+  </div>
+  <div class="add-ex-body">
+    <div class="field">
+      <label>Date</label>
+      <input type="date" id="bw-date">
+    </div>
+    <div class="field">
+      <label>Body weight (lb)</label>
+      <input type="number" id="bw-value" placeholder="170">
+    </div>
+    <button class="submit-btn" id="bw-submit">Save weight</button>
+  </div>
+</div>
+
 <!-- PIN SCREEN -->
 <div id="pin-screen">
   <h2>Workout Log</h2>
@@ -1451,6 +1481,16 @@ function getLatestBodyWeightForProfile(profile) {
   return parseFloat(last[7]) || null;
 }
 
+// Same as above, but also returns which date that weight was recorded on —
+// used for the always-visible "current weight on file" display.
+function getLatestWeightRecordForProfile(profile) {
+  const withWeight = allLogRows.filter(r => r[10] === profile && r[7]);
+  if (!withWeight.length) return null;
+  const last = withWeight[withWeight.length - 1];
+  const weight = parseFloat(last[7]);
+  return isNaN(weight) ? null : { weight, date: last[0] };
+}
+
 // Finds the body weight (lb) that was in effect as of a given date — the most
 // recent entry logged on or before that date, since weight changes over time.
 // Falls back to the earliest known weight if the date predates any of them.
@@ -1494,34 +1534,46 @@ function estimateCaloriesForDay(rows, bodyWeightKg) {
   return Math.round(avgMet * bodyWeightKg * durationHours);
 }
 
-// Builds the calorie card's inner HTML for a given profile/date, or null if
-// there's nothing to show yet (no rows logged, or no body weight on file).
-function buildCalorieCardHtml(profile, dateStr) {
-  const targetDate = dateStr || new Date().toLocaleDateString('en-US');
-  const dayRows = allLogRows.filter(r => r[0] === targetDate && r[10] === profile && r[2]);
-  if (!dayRows.length) return null;
+// Always renders something — including *why* there's no number yet — so it's
+// obvious whether the issue is "no exercises logged today" vs "no weight on
+// file" vs an actual estimate, instead of just silently showing nothing.
+function buildCalorieSectionHtml(profile) {
+  const today = new Date().toLocaleDateString('en-US');
+  const todaysExerciseRows = allLogRows.filter(r => r[0] === today && r[10] === profile && r[2]);
+  const exerciseCount = todaysExerciseRows.length;
 
-  const bwLbs = getBodyWeightAsOf(profile, targetDate);
-  if (!bwLbs) {
-    return '<div class="calorie-hint">Log your body weight (optional field above) to enable a calorie estimate.</div>';
+  const weightRecord = getLatestWeightRecordForProfile(profile);
+  let calorieLabel;
+  let est = null;
+
+  if (!exerciseCount) {
+    calorieLabel = `No exercises logged today for ${escapeHtml(profile)} yet.`;
+  } else if (!weightRecord) {
+    calorieLabel = 'Add your body weight below to get a calorie estimate.';
+  } else {
+    est = estimateCaloriesForDay(todaysExerciseRows, weightRecord.weight / 2.20462);
+    calorieLabel = est !== null ? 'Estimated calories burned today' : "Couldn't estimate — check log timestamps.";
   }
 
-  const bwKg = bwLbs / 2.20462;
-  const est = estimateCaloriesForDay(dayRows, bwKg);
-  if (est === null) return null;
+  const weightLine = weightRecord
+    ? `Current weight on file: ${weightRecord.weight} lb (as of ${escapeHtml(weightRecord.date)})`
+    : 'No body weight on file yet.';
 
   return `
     <div class="calorie-card">
-      <div class="calorie-value">~${est} kcal</div>
-      <div class="calorie-label">Estimated calories burned today</div>
-      <div class="calorie-note">Rough estimate from average MET values — not exact</div>
-      <button onclick="openCalorieHistoryOverlay()" style="margin-top:8px;background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:0;">View history</button>
+      <div class="calorie-value">${est !== null ? '~' + est + ' kcal' : '—'}</div>
+      <div class="calorie-label">${calorieLabel}</div>
+      <div class="calorie-note">${exerciseCount} exercise set${exerciseCount === 1 ? '' : 's'} logged today for ${escapeHtml(profile)}</div>
+      <div class="calorie-note">${weightLine}</div>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button onclick="openBodyWeightOverlay()" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;cursor:pointer;">Update weight</button>
+        <button onclick="openCalorieHistoryOverlay()" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;cursor:pointer;">View history</button>
+      </div>
     </div>`;
 }
 
 function renderDailyCalorieEstimate() {
-  const el = document.getElementById('calorie-estimate');
-  el.innerHTML = buildCalorieCardHtml(getCurrentProfile()) || '';
+  document.getElementById('calorie-estimate').innerHTML = buildCalorieSectionHtml(getCurrentProfile());
 }
 
 // Live version shown right on the Log page — updates instantly from data
@@ -1529,7 +1581,7 @@ function renderDailyCalorieEstimate() {
 function renderLogPageCalorieEstimate() {
   const el = document.getElementById('log-calorie-estimate');
   if (!el) return;
-  el.innerHTML = buildCalorieCardHtml(getCurrentProfile()) || '';
+  el.innerHTML = buildCalorieSectionHtml(getCurrentProfile());
 }
 
 // ---- Calorie history ----
@@ -2191,6 +2243,71 @@ document.getElementById('new-ex-submit').onclick = async () => {
 
 // ---- Finish workout ----
 document.getElementById('finish-workout-btn').onclick = openWorkoutRecapOverlay;
+
+// ---- Update body weight (independent of logging an exercise) ----
+function openBodyWeightOverlay() {
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  document.getElementById('bw-date').value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('bw-value').value = '';
+  document.getElementById('body-weight-overlay').classList.add('open');
+}
+function closeBodyWeightOverlay() {
+  document.getElementById('body-weight-overlay').classList.remove('open');
+}
+
+document.getElementById('bw-submit').onclick = async () => {
+  const dateInput = document.getElementById('bw-date').value; // yyyy-mm-dd
+  const weight = document.getElementById('bw-value').value.trim();
+  if (!dateInput || !weight) { showToast('Enter a date and weight', true); return; }
+
+  // Convert yyyy-mm-dd into the same M/D/YYYY format used everywhere else.
+  const [y, m, d] = dateInput.split('-').map(Number);
+  const dateStr = new Date(y, m - 1, d).toLocaleDateString('en-US');
+  const now = new Date();
+
+  const btn = document.getElementById('bw-submit');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  // A weight-only row: exercise/group left blank so it never shows up as a
+  // logged "exercise" anywhere (Progress cards, recap, entry counts all
+  // require a non-empty exercise name) — it only feeds the weight lookups.
+  const payload = {
+    op: 'create',
+    id: generateId(),
+    token: getToken(),
+    user: getCurrentProfile(),
+    date: dateStr,
+    time: now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
+    exercise: '',
+    group: '',
+    reps: '',
+    sets: '',
+    weight: '',
+    energy: '',
+    bodyweight: weight,
+    howlong: '',
+  };
+
+  const res = await sendEntryOp(payload);
+  btn.disabled = false;
+  btn.textContent = 'Save weight';
+
+  if (res && res.ok) {
+    allLogRows.push([
+      payload.date, payload.time, payload.exercise, payload.reps, payload.sets, payload.weight,
+      payload.energy, payload.bodyweight, payload.howlong, 0, payload.user, payload.group, payload.id,
+    ]);
+    closeBodyWeightOverlay();
+    renderLogPageCalorieEstimate();
+    showToast('✓ Weight saved');
+  } else {
+    showToast('Could not save — try again', true);
+  }
+};
 
 // ---- Manage custom exercises overlay ----
 document.getElementById('manage-custom-btn').onclick = async () => {
