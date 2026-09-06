@@ -1,5 +1,6 @@
 const SHEET_NAME = 'Data';
 const CUSTOM_SHEET_NAME = 'CustomExercises';
+const ROUTINES_SHEET_NAME = 'Routines';
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 300;
 
@@ -10,6 +11,9 @@ const ID_COL_INDEX = 12;
 
 // CustomExercises sheet columns (0-based):
 // 0=Id, 1=Name, 2=Group, 3=ImageUrl, 4=PrimaryMuscle, 5=SecondaryMuscles, 6=AddedBy, 7=DateAdded, 8=Type
+
+// Routines sheet columns (0-based) — one row per exercise within a routine:
+// 0=Id, 1=Profile, 2=RoutineName, 3=Exercise, 4=Group, 5=SortOrder
 
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -24,6 +28,17 @@ function getCustomSheet_() {
   if (!sheet) {
     sheet = ss.insertSheet(CUSTOM_SHEET_NAME);
     sheet.appendRow(['Id', 'Name', 'Group', 'ImageUrl', 'PrimaryMuscle', 'SecondaryMuscles', 'AddedBy', 'DateAdded', 'Type']);
+  }
+  return sheet;
+}
+
+// Auto-creates the Routines tab (with headers) the first time it's needed.
+function getRoutinesSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(ROUTINES_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(ROUTINES_SHEET_NAME);
+    sheet.appendRow(['Id', 'Profile', 'RoutineName', 'Exercise', 'Group', 'SortOrder']);
   }
   return sheet;
 }
@@ -164,6 +179,53 @@ function deleteCustomExercise_(payload) {
   return jsonOut_({ ok: true });
 }
 
+// Returns the 1-based sheet row number for a given routine-exercise id, or -1 if not found.
+function findRoutineRowIndexById_(sheet, id) {
+  if (!id) return -1;
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][0] === id) return i + 1;
+  }
+  return -1;
+}
+
+function addRoutineExercise_(payload) {
+  const sheet = getRoutinesSheet_();
+  sheet.appendRow([
+    payload.id || '',
+    payload.profile || '',
+    payload.routineName || '',
+    payload.exercise || '',
+    payload.group || '',
+    payload.sortOrder || 0,
+  ]);
+  return jsonOut_({ ok: true });
+}
+
+function deleteRoutineExercise_(payload) {
+  const sheet = getRoutinesSheet_();
+  const rowNum = findRoutineRowIndexById_(sheet, payload.id);
+  if (rowNum === -1) return jsonOut_({ ok: false, error: 'not_found' });
+  sheet.deleteRow(rowNum);
+  return jsonOut_({ ok: true });
+}
+
+// Deletes every exercise row belonging to one profile+routineName (i.e. the
+// whole routine), since a routine has no separate "container" row of its own.
+function deleteRoutine_(payload) {
+  const sheet = getRoutinesSheet_();
+  const values = sheet.getDataRange().getValues();
+  const rowsToDelete = [];
+  for (let i = 1; i < values.length; i++) {
+    if (values[i][1] === payload.profile && values[i][2] === payload.routineName) {
+      rowsToDelete.push(i + 1);
+    }
+  }
+  // Delete from the bottom up so earlier row numbers stay valid mid-loop.
+  rowsToDelete.sort((a, b) => b - a).forEach(rowNum => sheet.deleteRow(rowNum));
+  return jsonOut_({ ok: true });
+}
+
 function doGet(e) {
   const auth = checkAuth_(e.parameter.token);
   if (!auth.ok) return jsonOut_(auth);
@@ -174,6 +236,12 @@ function doGet(e) {
 
   if (e.parameter.action === 'customExercises') {
     const sheet = getCustomSheet_();
+    const rows = sheet.getDataRange().getValues();
+    return jsonOut_({ ok: true, rows: rows });
+  }
+
+  if (e.parameter.action === 'routines') {
+    const sheet = getRoutinesSheet_();
     const rows = sheet.getDataRange().getValues();
     return jsonOut_({ ok: true, rows: rows });
   }
@@ -199,5 +267,8 @@ function doPost(e) {
   if (op === 'addCustomExercise') return addCustomExercise_(payload);
   if (op === 'updateCustomExercise') return updateCustomExercise_(payload);
   if (op === 'deleteCustomExercise') return deleteCustomExercise_(payload);
+  if (op === 'addRoutineExercise') return addRoutineExercise_(payload);
+  if (op === 'deleteRoutineExercise') return deleteRoutineExercise_(payload);
+  if (op === 'deleteRoutine') return deleteRoutine_(payload);
   return createEntry_(payload);
 }
