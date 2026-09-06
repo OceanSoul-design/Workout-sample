@@ -702,7 +702,11 @@ async function loadExerciseOptions(group) {
     const muscles = MUSCLE_MAP[group] || [];
     const names = Array.from(new Set(
       exerciseDb
-        .filter(ex => ex.primaryMuscles && ex.primaryMuscles.some(m => muscles.includes(m)))
+        .filter(ex => {
+          const primary = ex.primaryMuscles || [];
+          const secondary = ex.secondaryMuscles || [];
+          return primary.some(m => muscles.includes(m)) || secondary.some(m => muscles.includes(m));
+        })
         .map(ex => ex.name)
     )).sort();
     populateExerciseSelect(names);
@@ -1080,9 +1084,11 @@ document.getElementById('refresh-btn').onclick = loadProgress;
 
 // ---- Exercise detail overlay ----
 let overlayExerciseName = '';
+let exGifInterval = null;
 
 async function openExOverlay(name, group) {
   if (!name) return;
+  if (exGifInterval) { clearInterval(exGifInterval); exGifInterval = null; }
   overlayExerciseName = name;
   document.getElementById('ex-overlay-name').textContent = name;
   document.getElementById('ex-gif').innerHTML = '<div class="ex-gif-loading">Loading...</div>';
@@ -1098,8 +1104,23 @@ async function openExOverlay(name, group) {
     const ex = exerciseDb.find(e => e.name === name);
 
     if (ex && ex.images && ex.images.length) {
-      document.getElementById('ex-gif').innerHTML =
-        `<img src="${FREE_EXERCISE_IMG_BASE + ex.images[0]}" alt="${escapeHtml(name)}">`;
+      const gifWrap = document.getElementById('ex-gif');
+      gifWrap.innerHTML = `
+        <img src="${FREE_EXERCISE_IMG_BASE + ex.images[0]}" alt="${escapeHtml(name)}">
+        <div class="ex-frame-count" style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;">1 / ${ex.images.length}</div>
+      `;
+      gifWrap.style.position = 'relative';
+      const imgEl = gifWrap.querySelector('img');
+      const counterEl = gifWrap.querySelector('.ex-frame-count');
+
+      if (ex.images.length > 1) {
+        let frame = 0;
+        exGifInterval = setInterval(() => {
+          frame = (frame + 1) % ex.images.length;
+          imgEl.src = FREE_EXERCISE_IMG_BASE + ex.images[frame];
+          counterEl.textContent = (frame + 1) + ' / ' + ex.images.length;
+        }, 700);
+      }
     } else {
       document.getElementById('ex-gif').innerHTML =
         '<div class="ex-gif-loading">No image found</div>';
@@ -1130,6 +1151,7 @@ async function openExOverlay(name, group) {
 
 function closeExOverlay() {
   document.getElementById('ex-overlay').classList.remove('open');
+  if (exGifInterval) { clearInterval(exGifInterval); exGifInterval = null; }
 }
 
 document.getElementById('ex-use-btn').onclick = () => {
